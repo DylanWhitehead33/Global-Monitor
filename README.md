@@ -1,18 +1,21 @@
-# Global Monitor
+# J.A.R.V.I.S. — Central Intelligence Hub
 
-A personal real-time situational-awareness dashboard, inspired by
-[worldmonitor](https://github.com/koala73/worldmonitor) but rebuilt from scratch as a
-simple static site. No servers, no build step, no API keys — it runs entirely on
-**GitHub Pages** for free.
+A personal real-time situational-awareness dashboard with a holographic HUD theme,
+inspired by [worldmonitor](https://github.com/koala73/worldmonitor) but rebuilt from
+scratch as a simple static site. No servers, no build step, no API keys — it runs
+entirely on **GitHub Pages** for free.
 
 **What it shows**
 
 - Rotating 3D night-lights globe with markers for geolocated news events and earthquakes
+- Flat satellite map (Leaflet + Esri World Imagery) with near-live infrared cloud and
+  precipitation radar overlays (RainViewer, ~10 min refresh) plus news/quake markers
+- Bloomberg TV live stream embed (YouTube)
 - Four live news panels: World, Geopolitics/Defense, Tech, Finance (15 RSS sources)
 - Live earthquakes M2.5+ from USGS
 - Crypto prices with 7-day sparklines (CoinGecko) and FX rates (ECB via Frankfurter)
 - Space weather: NOAA planetary K-index
-- UTC + local clocks and data freshness
+- UTC + local clocks, data freshness, and a systems-status readout
 
 **How it stays fresh with no server:** a GitHub Action (`.github/workflows/refresh-data.yml`)
 runs every 30 minutes, fetches all the RSS feeds, geocodes country mentions for the globe,

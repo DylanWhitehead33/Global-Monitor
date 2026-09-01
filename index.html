@@ -3,17 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GLOBAL MONITOR</title>
-<meta name="description" content="Personal real-time situational awareness dashboard: world news, geopolitics, markets, earthquakes, space weather.">
+<title>JARVIS — Central Intelligence Hub</title>
+<meta name="description" content="Personal central intelligence hub: world news, geopolitics, live satellite map, markets, earthquakes, space weather.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header id="topbar">
   <div class="brand">
-    <span class="pulse-dot" aria-hidden="true"></span>
-    <h1>GLOBAL&nbsp;MONITOR</h1>
-    <span class="tagline">personal situational awareness</span>
+    <span class="reactor" aria-hidden="true"></span>
+    <div class="brand-text">
+      <h1>J.A.R.V.I.S.</h1>
+      <span class="tagline">CENTRAL INTELLIGENCE HUB</span>
+    </div>
+    <span id="sys-status" class="sys-status">INITIALIZING…</span>
   </div>
   <div class="clocks">
     <div class="clock"><span class="clock-label">UTC</span><span id="clock-utc">--:--:--</span></div>
@@ -24,12 +31,34 @@
 
 <main id="grid">
   <section class="panel panel-globe" id="globe-panel">
-    <div class="panel-head"><h2>OPERATIONS GLOBE</h2><span class="panel-note" id="globe-note">news events · earthquakes M2.5+ (24h)</span></div>
+    <div class="panel-head"><h2>ORBITAL VIEW</h2><span class="panel-note" id="globe-note">news events · earthquakes M2.5+ (24h)</span></div>
     <div id="globe"></div>
     <div class="legend" id="globe-legend">
       <span><i class="dot dot-event"></i> news event</span>
       <span><i class="dot dot-quake"></i> earthquake</span>
       <span class="hint">drag to rotate · scroll to zoom · hover for detail</span>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-video">
+    <div class="panel-head"><h2>LIVE UPLINK — BLOOMBERG TV</h2><span class="panel-note">via YouTube</span></div>
+    <div class="video-wrap">
+      <iframe src="https://www.youtube.com/embed/live_stream?channel=UCIALMKvObZNtJ6AmdCLP7Lg"
+        title="Bloomberg Television live"
+        allow="encrypted-media; picture-in-picture" allowfullscreen loading="lazy"
+        referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    </div>
+    <p class="smallprint">Player showing “unavailable”? The stream is off-air or embed-restricted —
+      <a href="https://www.youtube.com/@markets/streams" target="_blank" rel="noopener">open Bloomberg TV on YouTube</a>.</p>
+  </section>
+
+  <section class="panel" id="panel-satmap">
+    <div class="panel-head"><h2>SURFACE SCAN — SATELLITE</h2><span class="panel-note">Esri imagery · IR clouds &amp; radar ~10 min refresh</span></div>
+    <div id="satmap"></div>
+    <div class="legend">
+      <span><i class="dot dot-event"></i> news event</span>
+      <span><i class="dot dot-quake"></i> earthquake</span>
+      <span class="hint">layers toggle top-right · click markers for detail</span>
     </div>
   </section>
 
@@ -49,16 +78,6 @@
     <div id="fx-strip" class="fx-strip"></div>
   </section>
 
-  <section class="panel" id="panel-tech">
-    <div class="panel-head"><h2>TECH</h2><span class="panel-note" id="note-tech"></span></div>
-    <ol class="feed" id="feed-tech"></ol>
-  </section>
-
-  <section class="panel" id="panel-finance">
-    <div class="panel-head"><h2>FINANCE</h2><span class="panel-note" id="note-finance"></span></div>
-    <ol class="feed" id="feed-finance"></ol>
-  </section>
-
   <section class="panel" id="panel-earth">
     <div class="panel-head"><h2>SEISMIC — LAST 24H</h2><span class="panel-note" id="quake-note"></span></div>
     <ol class="feed quakes" id="feed-quakes"></ol>
@@ -72,14 +91,26 @@
     </div>
     <p class="smallprint">Kp 0–3 quiet · 4 active · 5+ geomagnetic storm (aurora likely at high latitudes)</p>
   </section>
+
+  <section class="panel" id="panel-tech">
+    <div class="panel-head"><h2>TECH</h2><span class="panel-note" id="note-tech"></span></div>
+    <ol class="feed" id="feed-tech"></ol>
+  </section>
+
+  <section class="panel" id="panel-finance">
+    <div class="panel-head"><h2>FINANCE</h2><span class="panel-note" id="note-finance"></span></div>
+    <ol class="feed" id="feed-finance"></ol>
+  </section>
 </main>
 
 <footer>
-  <span>Static dashboard · news refreshed every 30 min by GitHub Actions · quakes/markets fetched live in your browser</span>
-  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · USGS · CoinGecko · Frankfurter · NOAA</span>
+  <span>Static dashboard · news refreshed every 30 min by GitHub Actions · map layers, quakes and markets fetched live in your browser</span>
+  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer</span>
+  <span>Personal fan project — “JARVIS” is a homage; not affiliated with Marvel, Bloomberg, or any data provider.</span>
 </footer>
 
 <script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

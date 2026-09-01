@@ -6,6 +6,20 @@
 
 const $ = (id) => document.getElementById(id);
 
+/* ---------- system status readout ---------- */
+const SYS = { news: null, quakes: null, crypto: null, fx: null, kp: null };
+function sysReport(key, ok) {
+  SYS[key] = ok;
+  const vals = Object.values(SYS);
+  const done = vals.filter((v) => v !== null).length;
+  const up = vals.filter((v) => v === true).length;
+  const el = $("sys-status");
+  if (!el) return;
+  if (done < vals.length) el.textContent = `BRINGING SYSTEMS ONLINE… ${up}/${vals.length}`;
+  else if (up === vals.length) el.textContent = "ALL SYSTEMS NOMINAL";
+  else el.textContent = `${up}/${vals.length} FEEDS ONLINE`;
+}
+
 /* ---------- clocks ---------- */
 function tickClocks() {
   const now = new Date();
@@ -50,9 +64,11 @@ async function loadNews() {
         : `<li class="empty">No items yet — the refresh Action populates this within 30 minutes of deploy.</li>`;
     }
     newsEvents = data.events ?? [];
+    sysReport("news", true);
   } catch (e) {
     console.error("news.json load failed:", e);
     $("data-age").textContent = "unavailable";
+    sysReport("news", false);
   }
 }
 function esc(s) {
@@ -80,9 +96,11 @@ async function loadQuakes() {
       `<span class="meta">${ago(q.time)}</span></a></li>`
     ).join("") || `<li class="empty">No M2.5+ quakes reported.</li>`;
     quakePoints = quakes;
+    sysReport("quakes", true);
   } catch (e) {
     console.error("USGS load failed:", e);
     $("feed-quakes").innerHTML = `<li class="empty">Seismic feed unavailable right now.</li>`;
+    sysReport("quakes", false);
   }
 }
 
@@ -114,9 +132,11 @@ async function loadCrypto() {
         `<span class="chg ${cls}">${sign}${Math.abs(chg).toFixed(2)}% 24h</span></span>` +
         `</div>`;
     }).join("");
+    sysReport("crypto", true);
   } catch (e) {
     console.error("CoinGecko load failed:", e);
     $("crypto-tiles").innerHTML = `<div class="tile"><span class="name">Crypto feed unavailable right now.</span></div>`;
+    sysReport("crypto", false);
   }
 }
 
@@ -129,9 +149,11 @@ async function loadFX() {
     $("fx-strip").innerHTML = Object.entries(data.rates).map(([sym, rate]) =>
       `<div class="fx"><span class="pair">USD/${sym}</span><span class="rate">${rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })}</span></div>`
     ).join("");
+    sysReport("fx", true);
   } catch (e) {
     console.error("FX load failed:", e);
     $("fx-strip").innerHTML = `<div class="fx"><span class="pair">FX feed unavailable right now.</span></div>`;
+    sysReport("fx", false);
   }
 }
 
@@ -147,9 +169,11 @@ async function loadKp() {
     const status = kp < 4 ? "QUIET" : kp < 5 ? "ACTIVE" : kp < 6 ? "MINOR STORM (G1)" : kp < 7 ? "MODERATE STORM (G2)" : "STRONG STORM (G3+)";
     $("kp-status").textContent = status;
     $("kp-label").textContent = `Planetary K-index · ${last[0].slice(0, 16)}Z`;
+    sysReport("kp", true);
   } catch (e) {
     console.error("NOAA load failed:", e);
     $("kp-status").textContent = "feed unavailable";
+    sysReport("kp", false);
   }
 }
 
@@ -166,15 +190,15 @@ function initGlobe() {
       label: `<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`,
     })),
     ...quakePoints.map((q) => ({
-      lat: q.lat, lng: q.lng, size: Math.max(0.25, (q.mag ?? 3) / 10), color: "#f5a524",
+      lat: q.lat, lng: q.lng, size: Math.max(0.25, (q.mag ?? 3) / 10), color: "#ffc65c",
       label: `<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br><i>${ago(q.time)}</i>`,
     })),
   ];
   const globe = Globe()(el)
     .globeImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-night.jpg")
     .bumpImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-topology.png")
-    .backgroundColor("#070b11")
-    .atmosphereColor("#3fd0e0")
+    .backgroundColor("#020a12")
+    .atmosphereColor("#00e5ff")
     .atmosphereAltitude(0.18)
     .pointsData(points)
     .pointAltitude("size")
@@ -190,10 +214,69 @@ function initGlobe() {
     globe.width(el.clientWidth).height(el.clientHeight));
 }
 
+/* ---------- flat satellite map (Leaflet + Esri imagery + RainViewer live layers) ---------- */
+function initSatMap() {
+  const el = $("satmap");
+  if (typeof L === "undefined") {
+    el.innerHTML = `<div class="globe-fallback">Map library could not be loaded.<br>Check your connection and reload.</div>`;
+    return;
+  }
+  const map = L.map(el, { worldCopyJump: true, minZoom: 2, zoomControl: true })
+    .setView([25, 10], 2);
+
+  const imagery = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "Imagery © Esri, Maxar, Earthstar Geographics", maxZoom: 17 }
+  ).addTo(map);
+  const labels = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "Labels © Esri", maxZoom: 17, opacity: 0.85 }
+  ).addTo(map);
+
+  // Markers
+  const newsLayer = L.layerGroup(newsEvents.map((e) =>
+    L.circleMarker([e.lat, e.lng], {
+      radius: 6, color: "#00e5ff", weight: 1.5, fillColor: "#00e5ff", fillOpacity: 0.5,
+    }).bindPopup(`<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`)
+  )).addTo(map);
+  const quakeLayer = L.layerGroup(quakePoints.map((q) =>
+    L.circleMarker([q.lat, q.lng], {
+      radius: Math.max(4, (q.mag ?? 3) * 1.6), color: "#ffc65c", weight: 1.5,
+      fillColor: "#ffc65c", fillOpacity: 0.45,
+    }).bindPopup(`<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br>` +
+      `<a href="${esc(q.url)}" target="_blank" rel="noopener">USGS detail</a> · ${ago(q.time)}`)
+  )).addTo(map);
+
+  const overlays = { "News events": newsLayer, "Earthquakes": quakeLayer };
+  const control = L.control.layers({}, overlays, { collapsed: true }).addTo(map);
+
+  // Near-live layers from RainViewer (updated ~every 10 minutes)
+  fetch("https://api.rainviewer.com/public/weather-maps.json")
+    .then((r) => r.json())
+    .then((wm) => {
+      const host = wm.host || "https://tilecache.rainviewer.com";
+      const sat = wm.satellite?.infrared?.at(-1);
+      const radar = wm.radar?.past?.at(-1);
+      if (sat) {
+        const irLayer = L.tileLayer(`${host}${sat.path}/256/{z}/{x}/{y}/0/0_0.png`,
+          { opacity: 0.65, attribution: "Clouds © RainViewer" }).addTo(map);
+        overlays["IR satellite clouds (live)"] = irLayer;
+        control.addOverlay(irLayer, "IR satellite clouds (live)");
+      }
+      if (radar) {
+        const radarLayer = L.tileLayer(`${host}${radar.path}/256/{z}/{x}/{y}/2/1_1.png`,
+          { opacity: 0.7, attribution: "Radar © RainViewer" });
+        control.addOverlay(radarLayer, "Precipitation radar (live)");
+      }
+    })
+    .catch((e) => console.error("RainViewer load failed:", e));
+}
+
 /* ---------- boot ---------- */
 (async function boot() {
   await Promise.allSettled([loadNews(), loadQuakes()]);
   initGlobe();
+  initSatMap();
   loadCrypto();
   loadFX();
   loadKp();
