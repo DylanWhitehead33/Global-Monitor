@@ -366,6 +366,7 @@ function conflictTier(i) {
 const OVL_COLORS = { nuclear: "#ff4d6d", military: "#4d9fff", choke: "#d98cff" };
 /* Operating country -> ISO flag code, from the base's country/operator label */
 function operatorFlag(c) {
+  if (c.includes("US weapons")) return "us";   // NATO-sharing sites: the weapons are US
   if (/^(US|United States)/.test(c)) return "us";
   if (/^United Kingdom/.test(c)) return "gb";
   if (/^France/.test(c)) return "fr";
@@ -538,11 +539,22 @@ function initSatMap() {
     .catch((e) => console.error("RainViewer load failed:", e));
 
   // Toggleable overlay layers (driven by the legend checkboxes)
-  satLayers.nuclear = L.layerGroup(NUCLEAR_SITES.map((s) =>
-    L.circleMarker([s.lat, s.lng], {
+  satLayers.nuclear = L.layerGroup(NUCLEAR_SITES.map((s) => {
+    const code = operatorFlag(s.c);
+    const popup = `<b>☢ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>publicly reported, approximate</i>`;
+    if (code) {
+      return L.marker([s.lat, s.lng], {
+        icon: L.divIcon({
+          className: "flag-icon flag-nuclear",
+          html: `<img src="https://flagcdn.com/w40/${code}.png" alt="${esc(s.c)}">`,
+          iconSize: [18, 18], iconAnchor: [9, 9],
+        }),
+      }).bindPopup(popup);
+    }
+    return L.circleMarker([s.lat, s.lng], {
       radius: 5, color: OVL_COLORS.nuclear, weight: 1.5, fillColor: OVL_COLORS.nuclear, fillOpacity: 0.55,
-    }).bindPopup(`<b>☢ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>publicly reported, approximate</i>`)
-  ));
+    }).bindPopup(popup);
+  }));
   satLayers.military = L.layerGroup(MILITARY_BASES.map((s) => {
     const code = operatorFlag(s.c);
     const popup = `<b>▲ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>major base, curated list</i>`;

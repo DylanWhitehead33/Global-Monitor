@@ -234,10 +234,14 @@ a:hover { color: var(--accent); text-shadow: 0 0 8px rgba(0, 229, 255, 0.6); }
 .ship-icon svg { display: block; }
 .flag-icon {
   border-radius: 50%; overflow: hidden;
-  border: 2px solid #4d9fff; background: #06141f;
+  border: 2px solid #4d9fff; background: #06141f;      /* blue ring = military base */
   box-shadow: 0 0 6px rgba(77, 159, 255, 0.7);
 }
 .flag-icon img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.flag-icon.flag-nuclear {
+  border-color: #ff4d6d;                                /* red ring = nuclear site */
+  box-shadow: 0 0 6px rgba(255, 77, 109, 0.8);
+}
 
 .leaflet-container { background: #04101a; font-family: var(--body); }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {
