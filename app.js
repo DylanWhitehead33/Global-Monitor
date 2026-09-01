@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 
 /* ---------- system status readout ---------- */
-const SYS = { news: null, quakes: null, crypto: null, fx: null, kp: null };
+const SYS = { news: null, quakes: null, markets: null, crypto: null, fx: null, kp: null };
 function sysReport(key, ok) {
   SYS[key] = ok;
   const vals = Object.values(SYS);
@@ -120,7 +120,7 @@ async function loadCrypto() {
       "?vs_currency=usd&ids=bitcoin,ethereum,solana&sparkline=true&price_change_percentage=24h");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const coins = await res.json();
-    $("crypto-tiles").innerHTML = coins.map((c) => {
+    $("mkt-crypto").innerHTML = coins.map((c) => {
       const chg = c.price_change_percentage_24h ?? 0;
       const cls = chg >= 0 ? "up" : "down";
       const sign = chg >= 0 ? "+" : "−";
@@ -135,24 +135,79 @@ async function loadCrypto() {
     sysReport("crypto", true);
   } catch (e) {
     console.error("CoinGecko load failed:", e);
-    $("crypto-tiles").innerHTML = `<div class="tile"><span class="name">Crypto feed unavailable right now.</span></div>`;
+    $("mkt-crypto").innerHTML = `<div class="empty">Crypto feed unavailable right now.</div>`;
     sysReport("crypto", false);
   }
 }
 
-/* ---------- FX (Frankfurter / ECB, CORS-open, no key) ---------- */
-async function loadFX() {
+/* ---------- stock indexes (data/markets.json, refreshed by GitHub Action) ---------- */
+function indexRow(m) {
+  const cls = m.chgPct >= 0 ? "up" : "down";
+  const sign = m.chgPct >= 0 ? "+" : "−";
+  return `<div class="tile">` +
+    `<span class="name">${esc(m.name)}</span>` +
+    `${sparkSVG(m.spark)}` +
+    `<span class="price">${m.price.toLocaleString()} ` +
+    `<span class="chg ${cls}">${sign}${Math.abs(m.chgPct).toFixed(2)}%</span></span>` +
+    `</div>`;
+}
+async function loadMarkets() {
   try {
-    const res = await fetch("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CNY,MXN,CHF");
+    const res = await fetch(`data/markets.json?cb=${Math.floor(Date.now() / 600000)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    $("fx-strip").innerHTML = Object.entries(data.rates).map(([sym, rate]) =>
-      `<div class="fx"><span class="pair">USD/${sym}</span><span class="rate">${rate.toLocaleString(undefined, { maximumSignificantDigits: 5 })}</span></div>`
-    ).join("");
+    const empty = `<div class="empty">Awaiting first data refresh — the GitHub Action populates this within 30 minutes.</div>`;
+    $("mkt-us").innerHTML = data.us?.length ? data.us.map(indexRow).join("") : empty;
+    $("mkt-global").innerHTML = data.global?.length ? data.global.map(indexRow).join("") : empty;
+    if (data.updated) $("note-markets").textContent = `indexes ${ago(Date.parse(data.updated))} · 1mo trend`;
+    sysReport("markets", !!(data.us?.length));
+  } catch (e) {
+    console.error("markets.json load failed:", e);
+    $("mkt-us").innerHTML = $("mkt-global").innerHTML =
+      `<div class="empty">Index data unavailable — it appears after the first Action run.</div>`;
+    sysReport("markets", false);
+  }
+}
+
+/* ---------- markets tabs ---------- */
+function initTabs() {
+  const tabs = document.querySelectorAll("#panel-markets .tab");
+  tabs.forEach((btn) => btn.addEventListener("click", () => {
+    tabs.forEach((b) => b.classList.toggle("active", b === btn));
+    for (const pane of document.querySelectorAll("#panel-markets .tabpane"))
+      pane.hidden = pane.id !== `mkt-${btn.dataset.tab}`;
+  }));
+}
+
+/* ---------- FX (Frankfurter / ECB, CORS-open, no key) ---------- */
+const FX_SYMBOLS = ["EUR", "GBP", "JPY", "CNY", "CHF", "CAD", "AUD", "MXN", "INR", "BRL", "KRW", "SGD"];
+async function loadFX() {
+  try {
+    const to = new Date(), from = new Date(Date.now() - 14 * 864e5);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const res = await fetch(`https://api.frankfurter.dev/v1/${fmt(from)}..${fmt(to)}?base=USD&symbols=${FX_SYMBOLS.join(",")}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const dates = Object.keys(data.rates).sort();
+    $("mkt-fx").innerHTML = FX_SYMBOLS.map((sym) => {
+      const series = dates.map((d) => data.rates[d]?.[sym]).filter((v) => v != null);
+      if (!series.length) return "";
+      const last = series[series.length - 1];
+      const prev = series.length > 1 ? series[series.length - 2] : last;
+      const chgPct = prev ? ((last - prev) / prev) * 100 : 0;
+      const cls = chgPct >= 0 ? "up" : "down";
+      const sign = chgPct >= 0 ? "+" : "−";
+      return `<div class="tile">` +
+        `<span class="name">USD / ${sym}</span>` +
+        `${sparkSVG(series)}` +
+        `<span class="price">${last.toLocaleString(undefined, { maximumSignificantDigits: 5 })} ` +
+        `<span class="chg ${cls}">${sign}${Math.abs(chgPct).toFixed(2)}%</span></span>` +
+        `</div>`;
+    }).join("");
     sysReport("fx", true);
   } catch (e) {
     console.error("FX load failed:", e);
-    $("fx-strip").innerHTML = `<div class="fx"><span class="pair">FX feed unavailable right now.</span></div>`;
+    $("mkt-fx").innerHTML = `<div class="empty">Currency feed unavailable right now.</div>`;
     sysReport("fx", false);
   }
 }
@@ -177,34 +232,84 @@ async function loadKp() {
   }
 }
 
+/* ---------- overlays: tension heatmap, nuclear, military, choke points ---------- */
+const OVL = { tension: false, nuclear: false, military: false, choke: false };
+let tensionPlaces = [];
+async function loadTension() {
+  try {
+    const res = await fetch(`data/tension.json?cb=${Math.floor(Date.now() / 600000)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    tensionPlaces = (await res.json()).places ?? [];
+  } catch (e) {
+    console.error("tension.json load failed:", e);
+  }
+}
+function lerpHex(a, b, t) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
+}
+/* green (low) -> gold (mid) -> red (high) */
+function tensionColor(s) {
+  return s < 0.5 ? lerpHex("#35c98f", "#ffc65c", s * 2) : lerpHex("#ffc65c", "#f0716e", (s - 0.5) * 2);
+}
+const OVL_COLORS = { nuclear: "#ff4d6d", military: "#4d9fff", choke: "#d98cff" };
+function overlayDefs() {
+  const defs = [];
+  if (OVL.tension) defs.push(...tensionPlaces.map((p) => ({
+    lat: p.lat, lng: p.lng, color: tensionColor(p.score), r: 0.7 + p.score * 1.5, size: 0.03,
+    label: `<b>${esc(p.place)}</b><br>Tension index: ${(p.score * 100).toFixed(0)} / 100` +
+           `<br><i>${p.count} conflict-related headline${p.count === 1 ? "" : "s"}, trailing 30 days</i>`,
+  })));
+  if (OVL.nuclear) defs.push(...NUCLEAR_SITES.map((s) => ({
+    lat: s.lat, lng: s.lng, color: OVL_COLORS.nuclear, r: 0.5, size: 0.05,
+    label: `<b>☢ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>publicly reported, approximate</i>`,
+  })));
+  if (OVL.military) defs.push(...MILITARY_BASES.map((s) => ({
+    lat: s.lat, lng: s.lng, color: OVL_COLORS.military, r: 0.5, size: 0.05,
+    label: `<b>▲ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>major base, curated list</i>`,
+  })));
+  if (OVL.choke) defs.push(...CHOKE_POINTS.map((s) => ({
+    lat: s.lat, lng: s.lng, color: OVL_COLORS.choke, r: 0.6, size: 0.06,
+    label: `<b>⬖ ${esc(s.n)}</b><br>${esc(s.note)}`,
+  })));
+  return defs;
+}
+
 /* ---------- globe ---------- */
 let globeInstance = null;
+function globePoints() {
+  return [
+    ...newsEvents.map((e) => ({
+      lat: e.lat, lng: e.lng, size: 0.45, r: 0.55, color: "#00e5ff",
+      label: `<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`,
+    })),
+    ...quakePoints.map((q) => ({
+      lat: q.lat, lng: q.lng, size: Math.max(0.25, (q.mag ?? 3) / 10), r: 0.55, color: "#ffc65c",
+      label: `<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br><i>${ago(q.time)}</i>`,
+    })),
+    ...overlayDefs(),
+  ];
+}
+function refreshGlobe() {
+  if (globeInstance) globeInstance.pointsData(globePoints());
+}
 function initGlobe() {
   const el = $("globe");
   if (typeof Globe !== "function") {
     el.innerHTML = `<div class="globe-fallback">3D globe library could not be loaded.<br>Check your connection and reload.</div>`;
     return;
   }
-  const points = [
-    ...newsEvents.map((e) => ({
-      lat: e.lat, lng: e.lng, size: 0.45, color: "#3fd0e0",
-      label: `<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`,
-    })),
-    ...quakePoints.map((q) => ({
-      lat: q.lat, lng: q.lng, size: Math.max(0.25, (q.mag ?? 3) / 10), color: "#ffc65c",
-      label: `<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br><i>${ago(q.time)}</i>`,
-    })),
-  ];
   const globe = Globe()(el)
     .globeImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-night.jpg")
     .bumpImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-topology.png")
     .backgroundColor("#020a12")
     .atmosphereColor("#00e5ff")
     .atmosphereAltitude(0.18)
-    .pointsData(points)
+    .pointsData(globePoints())
     .pointAltitude("size")
     .pointColor("color")
-    .pointRadius(0.55)
+    .pointRadius("r")
     .pointLabel("label")
     .width(el.clientWidth)
     .height(el.clientHeight);
@@ -278,8 +383,58 @@ function initSatMap() {
     })
     .catch((e) => console.error("RainViewer load failed:", e));
 
+  // Toggleable overlay layers (driven by the legend checkboxes)
+  satLayers.tension = L.layerGroup(tensionPlaces.map((p) =>
+    L.circleMarker([p.lat, p.lng], {
+      radius: 6 + p.score * 14, color: tensionColor(p.score), weight: 1.5,
+      fillColor: tensionColor(p.score), fillOpacity: 0.45,
+    }).bindPopup(`<b>${esc(p.place)}</b><br>Tension index: ${(p.score * 100).toFixed(0)} / 100` +
+      `<br><i>${p.count} conflict-related headline${p.count === 1 ? "" : "s"}, trailing 30 days</i>`)
+  ));
+  satLayers.nuclear = L.layerGroup(NUCLEAR_SITES.map((s) =>
+    L.circleMarker([s.lat, s.lng], {
+      radius: 5, color: OVL_COLORS.nuclear, weight: 1.5, fillColor: OVL_COLORS.nuclear, fillOpacity: 0.55,
+    }).bindPopup(`<b>☢ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>publicly reported, approximate</i>`)
+  ));
+  satLayers.military = L.layerGroup(MILITARY_BASES.map((s) =>
+    L.circleMarker([s.lat, s.lng], {
+      radius: 5, color: OVL_COLORS.military, weight: 1.5, fillColor: OVL_COLORS.military, fillOpacity: 0.55,
+    }).bindPopup(`<b>▲ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>major base, curated list</i>`)
+  ));
+  satLayers.choke = L.layerGroup(CHOKE_POINTS.map((s) =>
+    L.circleMarker([s.lat, s.lng], {
+      radius: 7, color: OVL_COLORS.choke, weight: 1.5, fillColor: OVL_COLORS.choke, fillOpacity: 0.5,
+    }).bindPopup(`<b>⬖ ${esc(s.n)}</b><br>${esc(s.note)}`)
+  ));
+
   satMapInstance = map;
+  applyMapOverlays();
   return map;
+}
+
+const satLayers = {};
+function applyMapOverlays() {
+  if (!satMapInstance) return;
+  for (const key of ["tension", "nuclear", "military", "choke"]) {
+    const layer = satLayers[key];
+    if (!layer) continue;
+    if (OVL[key]) layer.addTo(satMapInstance);
+    else satMapInstance.removeLayer(layer);
+  }
+}
+
+/* ---------- overlay toggle wiring ---------- */
+function initOverlayToggles() {
+  for (const key of ["tension", "nuclear", "military", "choke"]) {
+    const box = $(`tog-${key}`);
+    if (!box) continue;
+    box.addEventListener("change", () => {
+      OVL[key] = box.checked;
+      if (key === "tension") $("tension-scale").hidden = !box.checked;
+      refreshGlobe();
+      applyMapOverlays();
+    });
+  }
 }
 
 /* ---------- view switcher (Orbital View <-> Satellite Flat Map) ---------- */
@@ -308,15 +463,19 @@ function initViewSwitcher() {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  await Promise.allSettled([loadNews(), loadQuakes()]);
+  await Promise.allSettled([loadNews(), loadQuakes(), loadTension()]);
   initGlobe();
   initViewSwitcher();
+  initTabs();
+  initOverlayToggles();
+  loadMarkets();
   loadCrypto();
   loadFX();
   loadKp();
   // periodic refresh while the tab stays open
   setInterval(loadNews, 10 * 60 * 1000);
   setInterval(loadQuakes, 10 * 60 * 1000);
+  setInterval(loadMarkets, 10 * 60 * 1000);
   setInterval(loadCrypto, 5 * 60 * 1000);
   setInterval(loadKp, 15 * 60 * 1000);
 })();

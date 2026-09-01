@@ -43,8 +43,15 @@
     <div id="globe"></div>
     <div id="satmap" hidden></div>
     <div class="legend" id="view-legend">
-      <span><i class="dot dot-event"></i> news event</span>
-      <span><i class="dot dot-quake"></i> earthquake</span>
+      <span><i class="dot dot-event"></i> news</span>
+      <span><i class="dot dot-quake"></i> quakes</span>
+      <label class="tog"><input type="checkbox" id="tog-tension"> <i class="dot" style="background:linear-gradient(90deg,#35c98f,#f0716e)"></i>TENSION HEATMAP</label>
+      <label class="tog"><input type="checkbox" id="tog-nuclear"> <i class="dot" style="background:#ff4d6d"></i>NUCLEAR SITES</label>
+      <label class="tog"><input type="checkbox" id="tog-military"> <i class="dot" style="background:#4d9fff"></i>MILITARY BASES</label>
+      <label class="tog"><input type="checkbox" id="tog-choke"> <i class="dot" style="background:#d98cff"></i>TRADE CHOKE POINTS</label>
+      <span class="tension-scale" id="tension-scale" hidden>
+        low <i class="scale-bar" aria-hidden="true"></i> high
+      </span>
       <span class="hint" id="view-hint">drag to rotate · scroll to zoom · hover for detail</span>
     </div>
   </section>
@@ -82,9 +89,17 @@
   </section>
 
   <section class="panel" id="panel-markets">
-    <div class="panel-head"><h2>MARKETS</h2><span class="panel-note">crypto 7d · FX vs USD</span></div>
-    <div id="crypto-tiles" class="tiles"></div>
-    <div id="fx-strip" class="fx-strip"></div>
+    <div class="panel-head"><h2>MARKETS</h2><span class="panel-note" id="note-markets"></span></div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="us" role="tab">U.S. STOCK MARKET</button>
+      <button class="tab" data-tab="global" role="tab">GLOBAL STOCK MARKET</button>
+      <button class="tab" data-tab="fx" role="tab">CURRENCY MARKETS</button>
+      <button class="tab" data-tab="crypto" role="tab">CRYPTO</button>
+    </div>
+    <div id="mkt-us" class="tabpane tiles"></div>
+    <div id="mkt-global" class="tabpane tiles" hidden></div>
+    <div id="mkt-fx" class="tabpane tiles" hidden></div>
+    <div id="mkt-crypto" class="tabpane tiles" hidden></div>
   </section>
 
   <section class="panel" id="panel-earth">
@@ -106,12 +121,13 @@
 
 <footer>
   <span>Static dashboard · news refreshed every 30 min by GitHub Actions · map layers, quakes and markets fetched live in your browser</span>
-  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer</span>
-  <span>Personal project — not affiliated with Bloomberg or any data provider.</span>
+  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · Yahoo Finance · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer</span>
+  <span>Tension heatmap: keyword-weighted analysis of the last 30 days of geopolitics/world headlines, relative scale. Base &amp; choke-point markers: curated from publicly reported sources, locations approximate. Personal project — not affiliated with Bloomberg or any data provider.</span>
 </footer>
 
 <script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="overlays.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

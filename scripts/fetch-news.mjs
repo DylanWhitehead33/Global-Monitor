@@ -2,7 +2,7 @@
 // and writes data/news.json. Runs on Node 18+ (no dependencies).
 // Executed every 30 minutes by .github/workflows/refresh-data.yml.
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -162,3 +162,60 @@ mkdirSync(join(ROOT, "data"), { recursive: true });
 writeFileSync(join(ROOT, "data", "news.json"), JSON.stringify(payload));
 const counts = Object.entries(categories).map(([k, v]) => `${k}:${v.length}`).join(" ");
 console.log(`Wrote data/news.json  (${counts}, events:${events.length})`);
+
+/* ---------------- Global tension index (trailing 30 days) ----------------
+ * Each run, conflict-relevant geopolitics/world headlines are geocoded and
+ * appended to a rolling archive (data/tension-history.json). Entries older
+ * than 30 days are pruned, so the index always reflects the trailing month.
+ * Per-place scores are keyword-weighted counts, normalized 0..1 against the
+ * hottest location, and written to data/tension.json for the map heat layer.
+ */
+const TENSION_WEIGHTS = {
+  war: 3, invasion: 3, nuclear: 3, missile: 2, strike: 2, airstrike: 2,
+  attack: 2, offensive: 2, shelling: 2, killed: 2, bomb: 2, terror: 2,
+  troops: 1, drone: 1, clash: 1, sanction: 1, conflict: 1, mobiliz: 1,
+  hostage: 1, blockade: 1, escalat: 1, warship: 1, ceasefire: 1, coup: 2,
+};
+function tensionScore(title) {
+  const t = title.toLowerCase();
+  let s = 0;
+  for (const [kw, w] of Object.entries(TENSION_WEIGHTS)) if (t.includes(kw)) s += w;
+  return s;
+}
+
+const HISTORY_PATH = join(ROOT, "data", "tension-history.json");
+const DAY = 24 * 60 * 60 * 1000;
+const now = Date.now();
+let history = [];
+if (existsSync(HISTORY_PATH)) {
+  try { history = JSON.parse(readFileSync(HISTORY_PATH, "utf8")).entries ?? []; }
+  catch { history = []; }
+}
+const known = new Set(history.map((h) => h.k));
+for (const item of [...categories.geopolitics, ...categories.world]) {
+  const w = tensionScore(item.t);
+  if (w <= 0) continue;
+  const geo = geocode(item.t);
+  if (!geo) continue;
+  const k = item.t.toLowerCase().slice(0, 80);
+  if (known.has(k)) continue;
+  known.add(k);
+  history.push({ k, place: geo.place, lat: geo.lat, lng: geo.lng, w, ts: item.ts || now });
+}
+history = history.filter((h) => now - h.ts < 30 * DAY);
+writeFileSync(HISTORY_PATH, JSON.stringify({ updated: new Date().toISOString(), entries: history }));
+
+const byPlace = new Map();
+for (const h of history) {
+  const cur = byPlace.get(h.place) ?? { place: h.place, lat: h.lat, lng: h.lng, raw: 0, count: 0 };
+  cur.raw += h.w;
+  cur.count += 1;
+  byPlace.set(h.place, cur);
+}
+const places = [...byPlace.values()];
+const maxRaw = Math.max(1, ...places.map((p) => p.raw));
+for (const p of places) { p.score = +(p.raw / maxRaw).toFixed(3); delete p.raw; }
+places.sort((a, b) => b.score - a.score);
+writeFileSync(join(ROOT, "data", "tension.json"),
+  JSON.stringify({ updated: new Date().toISOString(), windowDays: 30, places }));
+console.log(`Wrote data/tension.json (${places.length} places from ${history.length} headlines)`);
