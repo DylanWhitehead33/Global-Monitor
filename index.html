@@ -43,8 +43,9 @@
     <div id="globe"></div>
     <div id="satmap" hidden></div>
     <div class="legend" id="view-legend">
-      <span><i class="dot dot-event"></i> news</span>
-      <span><i class="dot dot-quake"></i> quakes</span>
+      <label class="tog"><input type="checkbox" id="tog-news" checked> <i class="dot dot-event"></i>NEWS</label>
+      <label class="tog"><input type="checkbox" id="tog-quakes" checked> <i class="dot dot-quake"></i>QUAKES</label>
+      <label class="tog"><input type="checkbox" id="tog-ships"> <i class="dot" style="background:#ff9e3d"></i>OIL &amp; GAS TANKERS</label>
       <label class="tog"><input type="checkbox" id="tog-tension"> <i class="dot" style="background:linear-gradient(90deg,#35c98f,#f0716e)"></i>TENSION HEATMAP</label>
       <label class="tog"><input type="checkbox" id="tog-nuclear"> <i class="dot" style="background:#ff4d6d"></i>NUCLEAR SITES</label>
       <label class="tog"><input type="checkbox" id="tog-military"> <i class="dot" style="background:#4d9fff"></i>MILITARY BASES</label>
@@ -127,6 +128,7 @@
 
 <script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
 <script src="overlays.js"></script>
 <script src="app.js"></script>
 </body>

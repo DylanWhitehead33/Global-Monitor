@@ -232,8 +232,8 @@ async function loadKp() {
   }
 }
 
-/* ---------- overlays: tension heatmap, nuclear, military, choke points ---------- */
-const OVL = { tension: false, nuclear: false, military: false, choke: false };
+/* ---------- overlays: news, quakes, tankers, tension, nuclear, military, choke ---------- */
+const OVL = { news: true, quakes: true, ships: false, tension: false, nuclear: false, military: false, choke: false };
 let tensionPlaces = [];
 async function loadTension() {
   try {
@@ -243,6 +243,82 @@ async function loadTension() {
   } catch (e) {
     console.error("tension.json load failed:", e);
   }
+}
+
+/* ---------- tanker snapshot (data/shipping.json, refreshed by the Action) ---------- */
+let shipData = { updated: null, note: null, ships: [] };
+async function loadShips() {
+  try {
+    const res = await fetch(`data/shipping.json?cb=${Math.floor(Date.now() / 600000)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    shipData = await res.json();
+  } catch (e) {
+    console.error("shipping.json load failed:", e);
+  }
+}
+function shipTypeName(t) {
+  if (t === 84) return "LNG/LPG gas carrier";
+  if (t >= 80 && t <= 89) return "Oil/chemical tanker";
+  return "Tanker";
+}
+
+/* ---------- country polygons for the tension choropleth ---------- */
+let countriesFeatures = null;
+let countriesPromise = null;
+function ensureCountries() {
+  if (!countriesPromise) {
+    countriesPromise = fetch("https://unpkg.com/world-atlas@2.0.2/countries-110m.json")
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((topo) => {
+        countriesFeatures = topojson.feature(topo, topo.objects.countries).features;
+      })
+      .catch((e) => { console.error("country boundaries load failed:", e); countriesPromise = null; });
+  }
+  return countriesPromise;
+}
+/* Map geocoder place names (cities, regions) onto world-atlas country names.
+   Places mapping to null (seas, straits, blocs) are left out of the choropleth. */
+const PLACE_COUNTRY = {
+  "Kyiv": "Ukraine", "Ukraine's": "Ukraine", "Moscow": "Russia", "Beijing": "China",
+  "Hong Kong": "China", "Washington": "United States of America", "U.S.": "United States of America",
+  "US": "United States of America", "United States": "United States of America",
+  "New York": "United States of America", "California": "United States of America",
+  "Texas": "United States of America", "Tehran": "Iran", "Gaza": "Palestine",
+  "West Bank": "Palestine", "London": "United Kingdom", "UK": "United Kingdom",
+  "Britain": "United Kingdom", "Paris": "France", "Berlin": "Germany", "Tokyo": "Japan",
+  "Seoul": "South Korea", "Korea": "South Korea", "Brussels": "Belgium",
+  "Congo": "Dem. Rep. Congo", "Czech": "Czechia", "Bosnia": "Bosnia and Herz.",
+  "UAE": "United Arab Emirates", "Suez": "Egypt",
+  "NATO": null, "European Union": null, "Red Sea": null, "South China Sea": null,
+  "Black Sea": null, "Persian Gulf": null, "Strait of Hormuz": null, "Arctic": null,
+};
+function countryTension() {
+  const byCountry = new Map();
+  for (const p of tensionPlaces) {
+    const key = p.place in PLACE_COUNTRY ? PLACE_COUNTRY[p.place] : p.place.trim();
+    if (!key) continue;
+    const cur = byCountry.get(key) ?? { score: 0, count: 0 };
+    cur.score += p.score;
+    cur.count += p.count;
+    byCountry.set(key, cur);
+  }
+  const max = Math.max(0.001, ...[...byCountry.values()].map((c) => c.score));
+  for (const c of byCountry.values()) c.score = c.score / max;
+  return byCountry;
+}
+function tensionFeatures() {
+  if (!countriesFeatures) return [];
+  const byCountry = countryTension();
+  const out = [];
+  for (const f of countriesFeatures) {
+    const t = byCountry.get(f.properties.name);
+    if (t) out.push({ ...f, __t: { ...t, name: f.properties.name } });
+  }
+  return out;
+}
+function hexToRgba(hex, a) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r},${g},${b},${a})`;
 }
 function lerpHex(a, b, t) {
   const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
@@ -256,10 +332,10 @@ function tensionColor(s) {
 const OVL_COLORS = { nuclear: "#ff4d6d", military: "#4d9fff", choke: "#d98cff" };
 function overlayDefs() {
   const defs = [];
-  if (OVL.tension) defs.push(...tensionPlaces.map((p) => ({
-    lat: p.lat, lng: p.lng, color: tensionColor(p.score), r: 0.7 + p.score * 1.5, size: 0.03,
-    label: `<b>${esc(p.place)}</b><br>Tension index: ${(p.score * 100).toFixed(0)} / 100` +
-           `<br><i>${p.count} conflict-related headline${p.count === 1 ? "" : "s"}, trailing 30 days</i>`,
+  if (OVL.ships) defs.push(...(shipData.ships ?? []).map((s) => ({
+    lat: s.lat, lng: s.lng, color: "#ff9e3d", r: 0.28, size: 0.02,
+    label: `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
+           `<br><i>${s.sog != null ? s.sog.toFixed(1) + " kn · " : ""}snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`,
   })));
   if (OVL.nuclear) defs.push(...NUCLEAR_SITES.map((s) => ({
     lat: s.lat, lng: s.lng, color: OVL_COLORS.nuclear, r: 0.5, size: 0.05,
@@ -280,19 +356,21 @@ function overlayDefs() {
 let globeInstance = null;
 function globePoints() {
   return [
-    ...newsEvents.map((e) => ({
+    ...(OVL.news ? newsEvents.map((e) => ({
       lat: e.lat, lng: e.lng, size: 0.45, r: 0.55, color: "#00e5ff",
       label: `<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`,
-    })),
-    ...quakePoints.map((q) => ({
+    })) : []),
+    ...(OVL.quakes ? quakePoints.map((q) => ({
       lat: q.lat, lng: q.lng, size: Math.max(0.25, (q.mag ?? 3) / 10), r: 0.55, color: "#ffc65c",
       label: `<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br><i>${ago(q.time)}</i>`,
-    })),
+    })) : []),
     ...overlayDefs(),
   ];
 }
 function refreshGlobe() {
-  if (globeInstance) globeInstance.pointsData(globePoints());
+  if (!globeInstance) return;
+  globeInstance.pointsData(globePoints());
+  globeInstance.polygonsData(OVL.tension ? tensionFeatures() : []);
 }
 function initGlobe() {
   const el = $("globe");
@@ -311,6 +389,14 @@ function initGlobe() {
     .pointColor("color")
     .pointRadius("r")
     .pointLabel("label")
+    .polygonsData([])
+    .polygonAltitude(0.012)
+    .polygonCapColor((d) => hexToRgba(tensionColor(d.__t.score), 0.55))
+    .polygonSideColor(() => "rgba(0, 229, 255, 0.06)")
+    .polygonStrokeColor(() => "#0b2a38")
+    .polygonLabel((d) =>
+      `<b>${esc(d.__t.name)}</b><br>Tension index: ${(d.__t.score * 100).toFixed(0)} / 100` +
+      `<br><i>${d.__t.count} conflict-related headline${d.__t.count === 1 ? "" : "s"}, trailing 30 days</i>`)
     .width(el.clientWidth)
     .height(el.clientHeight);
   globe.controls().autoRotate = true;
@@ -345,22 +431,21 @@ function initSatMap() {
     { attribution: "Labels © Esri", maxZoom: 17, opacity: 0.85 }
   ).addTo(map);
 
-  // Markers
-  const newsLayer = L.layerGroup(newsEvents.map((e) =>
+  // Marker layers — visibility is driven by the legend toggles
+  satLayers.news = L.layerGroup(newsEvents.map((e) =>
     L.circleMarker([e.lat, e.lng], {
       radius: 6, color: "#00e5ff", weight: 1.5, fillColor: "#00e5ff", fillOpacity: 0.5,
     }).bindPopup(`<b>${esc(e.place)}</b><br>${esc(e.t)}<br><i>${esc(e.s)}</i>`)
-  )).addTo(map);
-  const quakeLayer = L.layerGroup(quakePoints.map((q) =>
+  ));
+  satLayers.quakes = L.layerGroup(quakePoints.map((q) =>
     L.circleMarker([q.lat, q.lng], {
       radius: Math.max(4, (q.mag ?? 3) * 1.6), color: "#ffc65c", weight: 1.5,
       fillColor: "#ffc65c", fillOpacity: 0.45,
     }).bindPopup(`<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br>` +
       `<a href="${esc(q.url)}" target="_blank" rel="noopener">USGS detail</a> · ${ago(q.time)}`)
-  )).addTo(map);
+  ));
 
-  const overlays = { "News events": newsLayer, "Earthquakes": quakeLayer };
-  const control = L.control.layers({}, overlays, { collapsed: true }).addTo(map);
+  const control = L.control.layers({}, {}, { collapsed: true }).addTo(map);
 
   // Near-live layers from RainViewer (updated ~every 10 minutes)
   fetch("https://api.rainviewer.com/public/weather-maps.json")
@@ -372,7 +457,6 @@ function initSatMap() {
       if (sat) {
         const irLayer = L.tileLayer(`${host}${sat.path}/256/{z}/{x}/{y}/0/0_0.png`,
           { opacity: 0.65, attribution: "Clouds © RainViewer" }).addTo(map);
-        overlays["IR satellite clouds (live)"] = irLayer;
         control.addOverlay(irLayer, "IR satellite clouds (live)");
       }
       if (radar) {
@@ -384,13 +468,6 @@ function initSatMap() {
     .catch((e) => console.error("RainViewer load failed:", e));
 
   // Toggleable overlay layers (driven by the legend checkboxes)
-  satLayers.tension = L.layerGroup(tensionPlaces.map((p) =>
-    L.circleMarker([p.lat, p.lng], {
-      radius: 6 + p.score * 14, color: tensionColor(p.score), weight: 1.5,
-      fillColor: tensionColor(p.score), fillOpacity: 0.45,
-    }).bindPopup(`<b>${esc(p.place)}</b><br>Tension index: ${(p.score * 100).toFixed(0)} / 100` +
-      `<br><i>${p.count} conflict-related headline${p.count === 1 ? "" : "s"}, trailing 30 days</i>`)
-  ));
   satLayers.nuclear = L.layerGroup(NUCLEAR_SITES.map((s) =>
     L.circleMarker([s.lat, s.lng], {
       radius: 5, color: OVL_COLORS.nuclear, weight: 1.5, fillColor: OVL_COLORS.nuclear, fillOpacity: 0.55,
@@ -413,9 +490,31 @@ function initSatMap() {
 }
 
 const satLayers = {};
+function buildMapTension() {
+  return L.geoJSON(tensionFeatures(), {
+    style: (f) => ({
+      color: "#0b2a38", weight: 1,
+      fillColor: tensionColor(f.__t.score), fillOpacity: 0.5,
+    }),
+    onEachFeature: (f, layer) => layer.bindPopup(
+      `<b>${esc(f.__t.name)}</b><br>Tension index: ${(f.__t.score * 100).toFixed(0)} / 100` +
+      `<br><i>${f.__t.count} conflict-related headline${f.__t.count === 1 ? "" : "s"}, trailing 30 days</i>`),
+  });
+}
+function buildMapShips() {
+  return L.layerGroup((shipData.ships ?? []).map((s) =>
+    L.circleMarker([s.lat, s.lng], {
+      radius: 3, color: "#ff9e3d", weight: 1, fillColor: "#ff9e3d", fillOpacity: 0.7,
+    }).bindPopup(`<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
+      `${s.sog != null ? `<br>${s.sog.toFixed(1)} kn` : ""}` +
+      `<br><i>snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`)
+  ));
+}
 function applyMapOverlays() {
   if (!satMapInstance) return;
-  for (const key of ["tension", "nuclear", "military", "choke"]) {
+  if (OVL.tension && !satLayers.tension && countriesFeatures) satLayers.tension = buildMapTension();
+  if (OVL.ships && !satLayers.ships && shipData.ships?.length) satLayers.ships = buildMapShips();
+  for (const key of ["news", "quakes", "ships", "tension", "nuclear", "military", "choke"]) {
     const layer = satLayers[key];
     if (!layer) continue;
     if (OVL[key]) layer.addTo(satMapInstance);
@@ -425,12 +524,20 @@ function applyMapOverlays() {
 
 /* ---------- overlay toggle wiring ---------- */
 function initOverlayToggles() {
-  for (const key of ["tension", "nuclear", "military", "choke"]) {
+  for (const key of ["news", "quakes", "ships", "tension", "nuclear", "military", "choke"]) {
     const box = $(`tog-${key}`);
     if (!box) continue;
-    box.addEventListener("change", () => {
+    box.addEventListener("change", async () => {
       OVL[key] = box.checked;
-      if (key === "tension") $("tension-scale").hidden = !box.checked;
+      if (key === "tension") {
+        $("tension-scale").hidden = !box.checked;
+        if (box.checked) await ensureCountries();
+      }
+      if (key === "ships" && box.checked && !(shipData.ships?.length)) {
+        $("view-note").textContent = shipData.note === "no-key"
+          ? "tanker layer needs a free AISSTREAM_KEY — see README"
+          : "no tanker snapshot yet — appears after the next data refresh";
+      }
       refreshGlobe();
       applyMapOverlays();
     });
@@ -463,7 +570,7 @@ function initViewSwitcher() {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  await Promise.allSettled([loadNews(), loadQuakes(), loadTension()]);
+  await Promise.allSettled([loadNews(), loadQuakes(), loadTension(), loadShips()]);
   initGlobe();
   initViewSwitcher();
   initTabs();
@@ -476,6 +583,15 @@ function initViewSwitcher() {
   setInterval(loadNews, 10 * 60 * 1000);
   setInterval(loadQuakes, 10 * 60 * 1000);
   setInterval(loadMarkets, 10 * 60 * 1000);
+  setInterval(async () => {
+    await Promise.allSettled([loadTension(), loadShips()]);
+    for (const key of ["tension", "ships"]) {   // rebuild these from fresh data
+      if (satLayers[key] && satMapInstance) satMapInstance.removeLayer(satLayers[key]);
+      satLayers[key] = null;
+    }
+    refreshGlobe();
+    applyMapOverlays();
+  }, 10 * 60 * 1000);
   setInterval(loadCrypto, 5 * 60 * 1000);
   setInterval(loadKp, 15 * 60 * 1000);
 })();

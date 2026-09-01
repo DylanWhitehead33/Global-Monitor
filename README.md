@@ -47,6 +47,20 @@ browser from open CORS-friendly APIs.
 5. *(One check if commits fail)*: Settings → Actions → General → Workflow permissions →
    select **Read and write permissions**.
 
+## Tanker layer (optional, free API key)
+
+The "Oil & Gas Tankers" toggle shows a global snapshot of tanker positions (AIS ship
+types 80–89) captured by the refresh Action. It needs a free key from
+[aisstream.io](https://aisstream.io):
+
+1. Sign up at aisstream.io (free), then create an API key in their dashboard.
+2. In your repo: **Settings → Secrets and variables → Actions → New repository secret**.
+3. Name: `AISSTREAM_KEY` · Secret: paste the key → **Add secret**.
+4. Actions tab → Refresh news data → **Run workflow**. Tankers appear on the next load.
+
+Without the secret the workflow still succeeds — the tanker layer just stays empty.
+Positions are a snapshot refreshed every 30 minutes, not a continuous live stream.
+
 ## Notes
 
 - GitHub pauses scheduled workflows after ~60 days with no repo activity; the Action's own
