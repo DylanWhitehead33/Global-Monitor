@@ -214,7 +214,10 @@ for (const h of history) {
 }
 const places = [...byPlace.values()];
 const maxRaw = Math.max(1, ...places.map((p) => p.raw));
-for (const p of places) { p.score = +(p.raw / maxRaw).toFixed(3); delete p.raw; }
+for (const p of places) {
+  p.score = +(p.raw / maxRaw).toFixed(3);  // relative (legacy)
+  p.raw = +p.raw.toFixed(1);               // absolute weighted volume, used for the war/low scale
+}
 places.sort((a, b) => b.score - a.score);
 writeFileSync(join(ROOT, "data", "tension.json"),
   JSON.stringify({ updated: new Date().toISOString(), windowDays: 30, places }));

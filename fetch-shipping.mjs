@@ -25,7 +25,7 @@ const COLLECT_MS = 90000;   // listen window per run
 const MAX_SHIPS = 4000;
 const MAX_TYPE_CACHE = 400000;
 
-// rolling tanker cache from previous runs: { "<mmsi>": typeCode }
+// rolling type cache from previous runs: { "<mmsi>": typeCode }
 let typeCache = {};
 if (existsSync(TYPES_PATH)) {
   try { typeCache = JSON.parse(readFileSync(TYPES_PATH, "utf8")); } catch { typeCache = {}; }
@@ -66,6 +66,7 @@ ws.addEventListener("message", async (ev) => {
           lat: +(+lat).toFixed(3),
           lng: +(+lng).toFixed(3),
           sog: p.Sog,
+          cog: p.Cog,
           name: (meta.ShipName ?? "").trim(),
         });
       }
@@ -85,7 +86,7 @@ ws.addEventListener("error", (e) => console.error("WS error:", e?.message ?? e))
 setTimeout(() => {
   try { ws.close(); } catch { /* already closed */ }
 
-  // persist the (possibly trimmed) tanker cache for the next run
+  // persist the (possibly trimmed) type cache for the next run
   let entries = Object.entries(typeCache);
   if (entries.length > MAX_TYPE_CACHE) entries = entries.slice(entries.length - MAX_TYPE_CACHE);
   writeFileSync(TYPES_PATH, JSON.stringify(Object.fromEntries(entries)));
@@ -95,11 +96,31 @@ setTimeout(() => {
     const t = typeCache[mmsi];
     if (t == null || t < 80 || t > 89) continue;   // tankers only (oil/chem/LNG/LPG)
     if (p.lat == null || p.lng == null || Number.isNaN(p.lat)) continue;
-    ships.push({ mmsi: +mmsi, name: p.name || `MMSI ${mmsi}`, lat: p.lat, lng: p.lng, sog: p.sog, t });
+    ships.push({ mmsi: +mmsi, name: p.name || `MMSI ${mmsi}`, lat: p.lat, lng: p.lng, sog: p.sog, cog: p.cog, t });
     if (ships.length >= MAX_SHIPS) break;
   }
   writeFileSync(OUT, JSON.stringify({ updated: new Date().toISOString(), ships }));
+
+  // Rolling position history per tanker (data/ship-tracks.json) — one breadcrumb
+  // per run, last 12 points (~6 hours at the 30-min cadence). Ships absent from
+  // this snapshot are dropped so the file stays bounded.
+  const TRACKS_PATH = join(ROOT, "data", "ship-tracks.json");
+  let tracks = {};
+  if (existsSync(TRACKS_PATH)) {
+    try { tracks = JSON.parse(readFileSync(TRACKS_PATH, "utf8")); } catch { tracks = {}; }
+  }
+  const newTracks = {};
+  for (const s of ships) {
+    const arr = tracks[s.mmsi] ?? [];
+    const last = arr[arr.length - 1];
+    if (!last || Math.abs(last[0] - s.lat) > 0.002 || Math.abs(last[1] - s.lng) > 0.002) {
+      arr.push([s.lat, s.lng]);
+    }
+    newTracks[s.mmsi] = arr.slice(-12);
+  }
+  writeFileSync(TRACKS_PATH, JSON.stringify(newTracks));
+
   console.log(`Wrote data/shipping.json (${ships.length} tankers · ${positions.size} vessels heard · ` +
-    `tanker cache ${entries.length}, +${newTypes} new)`);
+    `tanker cache ${entries.length}, +${newTypes} new) and ship-tracks.json (${Object.keys(newTracks).length} trails)`);
   process.exit(0);
 }, COLLECT_MS);
