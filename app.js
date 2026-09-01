@@ -178,6 +178,7 @@ async function loadKp() {
 }
 
 /* ---------- globe ---------- */
+let globeInstance = null;
 function initGlobe() {
   const el = $("globe");
   if (typeof Globe !== "function") {
@@ -210,16 +211,22 @@ function initGlobe() {
   globe.controls().autoRotate = true;
   globe.controls().autoRotateSpeed = 0.55;
   globe.pointOfView({ lat: 25, lng: 10, altitude: 2.1 });
-  window.addEventListener("resize", () =>
-    globe.width(el.clientWidth).height(el.clientHeight));
+  window.addEventListener("resize", () => {
+    if (!el.hidden) globe.width(el.clientWidth).height(el.clientHeight);
+  });
+  globeInstance = globe;
 }
 
-/* ---------- flat satellite map (Leaflet + Esri imagery + RainViewer live layers) ---------- */
+/* ---------- flat satellite map (Leaflet + Esri imagery + RainViewer live layers) ----------
+   Lazily initialized the first time the user picks "Satellite Flat Map" in the
+   view dropdown, since Leaflet needs a visible container to size itself. */
+let satMapInstance = null;
 function initSatMap() {
+  if (satMapInstance) return satMapInstance;
   const el = $("satmap");
   if (typeof L === "undefined") {
     el.innerHTML = `<div class="globe-fallback">Map library could not be loaded.<br>Check your connection and reload.</div>`;
-    return;
+    return null;
   }
   const map = L.map(el, { worldCopyJump: true, minZoom: 2, zoomControl: true })
     .setView([25, 10], 2);
@@ -270,13 +277,40 @@ function initSatMap() {
       }
     })
     .catch((e) => console.error("RainViewer load failed:", e));
+
+  satMapInstance = map;
+  return map;
+}
+
+/* ---------- view switcher (Orbital View <-> Satellite Flat Map) ---------- */
+function initViewSwitcher() {
+  const sel = $("view-select");
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    const showMap = sel.value === "satmap";
+    const globeEl = $("globe"), mapEl = $("satmap");
+    globeEl.hidden = showMap;
+    mapEl.hidden = !showMap;
+    $("view-note").textContent = showMap
+      ? "Esri imagery · IR clouds & radar ~10 min refresh"
+      : "news events · earthquakes M2.5+ (24h)";
+    $("view-hint").textContent = showMap
+      ? "layers toggle top-right · click markers for detail"
+      : "drag to rotate · scroll to zoom · hover for detail";
+    if (showMap) {
+      const m = initSatMap();
+      if (m) setTimeout(() => m.invalidateSize(), 60);
+    } else if (globeInstance) {
+      globeInstance.width(globeEl.clientWidth).height(globeEl.clientHeight);
+    }
+  });
 }
 
 /* ---------- boot ---------- */
 (async function boot() {
   await Promise.allSettled([loadNews(), loadQuakes()]);
   initGlobe();
-  initSatMap();
+  initViewSwitcher();
   loadCrypto();
   loadFX();
   loadKp();

@@ -1,4 +1,4 @@
-# J.A.R.V.I.S. — Central Intelligence Hub
+# Global Monitoring System
 
 A personal real-time situational-awareness dashboard with a holographic HUD theme,
 inspired by [worldmonitor](https://github.com/koala73/worldmonitor) but rebuilt from
@@ -7,10 +7,11 @@ entirely on **GitHub Pages** for free.
 
 **What it shows**
 
-- Rotating 3D night-lights globe with markers for geolocated news events and earthquakes
-- Flat satellite map (Leaflet + Esri World Imagery) with near-live infrared cloud and
-  precipitation radar overlays (RainViewer, ~10 min refresh) plus news/quake markers
-- Bloomberg TV live stream embed (YouTube)
+- Rotating 3D night-lights globe with markers for geolocated news events and earthquakes,
+  with a dropdown to switch the same panel to a flat satellite map (Leaflet + Esri World
+  Imagery) with near-live infrared cloud and precipitation radar overlays (RainViewer,
+  ~10 min refresh) plus news/quake markers
+- Bloomberg TV live stream embed (YouTube) as the main top-right panel
 - Four live news panels: World, Geopolitics/Defense, Tech, Finance (15 RSS sources)
 - Live earthquakes M2.5+ from USGS
 - Crypto prices with 7-day sparklines (CoinGecko) and FX rates (ECB via Frankfurter)

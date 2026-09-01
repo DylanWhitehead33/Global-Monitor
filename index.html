@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JARVIS — Central Intelligence Hub</title>
-<meta name="description" content="Personal central intelligence hub: world news, geopolitics, live satellite map, markets, earthquakes, space weather.">
+<title>Global Monitoring System</title>
+<meta name="description" content="Personal global monitoring system: live news, geopolitics, satellite map, markets, earthquakes, space weather.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,8 +17,7 @@
   <div class="brand">
     <span class="reactor" aria-hidden="true"></span>
     <div class="brand-text">
-      <h1>J.A.R.V.I.S.</h1>
-      <span class="tagline">CENTRAL INTELLIGENCE HUB</span>
+      <h1>GLOBAL MONITORING SYSTEM</h1>
     </div>
     <span id="sys-status" class="sys-status">INITIALIZING…</span>
   </div>
@@ -30,13 +29,23 @@
 </header>
 
 <main id="grid">
-  <section class="panel panel-globe" id="globe-panel">
-    <div class="panel-head"><h2>ORBITAL VIEW</h2><span class="panel-note" id="globe-note">news events · earthquakes M2.5+ (24h)</span></div>
+  <section class="panel" id="panel-view">
+    <div class="panel-head">
+      <label class="view-label" for="view-select">
+        <span aria-hidden="true">◈</span>
+        <select id="view-select" class="view-select">
+          <option value="globe" selected>ORBITAL VIEW</option>
+          <option value="satmap">SATELLITE FLAT MAP</option>
+        </select>
+      </label>
+      <span class="panel-note" id="view-note">news events · earthquakes M2.5+ (24h)</span>
+    </div>
     <div id="globe"></div>
-    <div class="legend" id="globe-legend">
+    <div id="satmap" hidden></div>
+    <div class="legend" id="view-legend">
       <span><i class="dot dot-event"></i> news event</span>
       <span><i class="dot dot-quake"></i> earthquake</span>
-      <span class="hint">drag to rotate · scroll to zoom · hover for detail</span>
+      <span class="hint" id="view-hint">drag to rotate · scroll to zoom · hover for detail</span>
     </div>
   </section>
 
@@ -52,16 +61,6 @@
       <a href="https://www.youtube.com/@markets/streams" target="_blank" rel="noopener">open Bloomberg TV on YouTube</a>.</p>
   </section>
 
-  <section class="panel" id="panel-satmap">
-    <div class="panel-head"><h2>SURFACE SCAN — SATELLITE</h2><span class="panel-note">Esri imagery · IR clouds &amp; radar ~10 min refresh</span></div>
-    <div id="satmap"></div>
-    <div class="legend">
-      <span><i class="dot dot-event"></i> news event</span>
-      <span><i class="dot dot-quake"></i> earthquake</span>
-      <span class="hint">layers toggle top-right · click markers for detail</span>
-    </div>
-  </section>
-
   <section class="panel" id="panel-world">
     <div class="panel-head"><h2>WORLD</h2><span class="panel-note" id="note-world"></span></div>
     <ol class="feed" id="feed-world"></ol>
@@ -70,6 +69,16 @@
   <section class="panel" id="panel-geopolitics">
     <div class="panel-head"><h2>GEOPOLITICS / DEFENSE</h2><span class="panel-note" id="note-geopolitics"></span></div>
     <ol class="feed" id="feed-geopolitics"></ol>
+  </section>
+
+  <section class="panel" id="panel-finance">
+    <div class="panel-head"><h2>FINANCE</h2><span class="panel-note" id="note-finance"></span></div>
+    <ol class="feed" id="feed-finance"></ol>
+  </section>
+
+  <section class="panel" id="panel-tech">
+    <div class="panel-head"><h2>TECHNOLOGY</h2><span class="panel-note" id="note-tech"></span></div>
+    <ol class="feed" id="feed-tech"></ol>
   </section>
 
   <section class="panel" id="panel-markets">
@@ -85,28 +94,20 @@
 
   <section class="panel" id="panel-space">
     <div class="panel-head"><h2>SPACE WEATHER</h2><span class="panel-note">NOAA SWPC</span></div>
-    <div id="kp-tile" class="kp-tile">
-      <div class="kp-value" id="kp-value">—</div>
-      <div class="kp-meta"><span id="kp-label">Planetary K-index</span><span id="kp-status" class="kp-status"></span></div>
+    <div class="space-row">
+      <div id="kp-tile" class="kp-tile">
+        <div class="kp-value" id="kp-value">—</div>
+        <div class="kp-meta"><span id="kp-label">Planetary K-index</span><span id="kp-status" class="kp-status"></span></div>
+      </div>
+      <p class="smallprint">Kp 0–3 quiet · 4 active · 5+ geomagnetic storm (aurora likely at high latitudes)</p>
     </div>
-    <p class="smallprint">Kp 0–3 quiet · 4 active · 5+ geomagnetic storm (aurora likely at high latitudes)</p>
-  </section>
-
-  <section class="panel" id="panel-tech">
-    <div class="panel-head"><h2>TECH</h2><span class="panel-note" id="note-tech"></span></div>
-    <ol class="feed" id="feed-tech"></ol>
-  </section>
-
-  <section class="panel" id="panel-finance">
-    <div class="panel-head"><h2>FINANCE</h2><span class="panel-note" id="note-finance"></span></div>
-    <ol class="feed" id="feed-finance"></ol>
   </section>
 </main>
 
 <footer>
   <span>Static dashboard · news refreshed every 30 min by GitHub Actions · map layers, quakes and markets fetched live in your browser</span>
   <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer</span>
-  <span>Personal fan project — “JARVIS” is a homage; not affiliated with Marvel, Bloomberg, or any data provider.</span>
+  <span>Personal project — not affiliated with Bloomberg or any data provider.</span>
 </footer>
 
 <script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
