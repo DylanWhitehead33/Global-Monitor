@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLOBAL MONITOR</title>
+<meta name="description" content="Personal real-time situational awareness dashboard: world news, geopolitics, markets, earthquakes, space weather.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">
+    <span class="pulse-dot" aria-hidden="true"></span>
+    <h1>GLOBAL&nbsp;MONITOR</h1>
+    <span class="tagline">personal situational awareness</span>
+  </div>
+  <div class="clocks">
+    <div class="clock"><span class="clock-label">UTC</span><span id="clock-utc">--:--:--</span></div>
+    <div class="clock"><span class="clock-label" id="local-label">LOCAL</span><span id="clock-local">--:--:--</span></div>
+    <div class="clock"><span class="clock-label">NEWS AS OF</span><span id="data-age">—</span></div>
+  </div>
+</header>
+
+<main id="grid">
+  <section class="panel panel-globe" id="globe-panel">
+    <div class="panel-head"><h2>OPERATIONS GLOBE</h2><span class="panel-note" id="globe-note">news events · earthquakes M2.5+ (24h)</span></div>
+    <div id="globe"></div>
+    <div class="legend" id="globe-legend">
+      <span><i class="dot dot-event"></i> news event</span>
+      <span><i class="dot dot-quake"></i> earthquake</span>
+      <span class="hint">drag to rotate · scroll to zoom · hover for detail</span>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-world">
+    <div class="panel-head"><h2>WORLD</h2><span class="panel-note" id="note-world"></span></div>
+    <ol class="feed" id="feed-world"></ol>
+  </section>
+
+  <section class="panel" id="panel-geopolitics">
+    <div class="panel-head"><h2>GEOPOLITICS / DEFENSE</h2><span class="panel-note" id="note-geopolitics"></span></div>
+    <ol class="feed" id="feed-geopolitics"></ol>
+  </section>
+
+  <section class="panel" id="panel-markets">
+    <div class="panel-head"><h2>MARKETS</h2><span class="panel-note">crypto 7d · FX vs USD</span></div>
+    <div id="crypto-tiles" class="tiles"></div>
+    <div id="fx-strip" class="fx-strip"></div>
+  </section>
+
+  <section class="panel" id="panel-tech">
+    <div class="panel-head"><h2>TECH</h2><span class="panel-note" id="note-tech"></span></div>
+    <ol class="feed" id="feed-tech"></ol>
+  </section>
+
+  <section class="panel" id="panel-finance">
+    <div class="panel-head"><h2>FINANCE</h2><span class="panel-note" id="note-finance"></span></div>
+    <ol class="feed" id="feed-finance"></ol>
+  </section>
+
+  <section class="panel" id="panel-earth">
+    <div class="panel-head"><h2>SEISMIC — LAST 24H</h2><span class="panel-note" id="quake-note"></span></div>
+    <ol class="feed quakes" id="feed-quakes"></ol>
+  </section>
+
+  <section class="panel" id="panel-space">
+    <div class="panel-head"><h2>SPACE WEATHER</h2><span class="panel-note">NOAA SWPC</span></div>
+    <div id="kp-tile" class="kp-tile">
+      <div class="kp-value" id="kp-value">—</div>
+      <div class="kp-meta"><span id="kp-label">Planetary K-index</span><span id="kp-status" class="kp-status"></span></div>
+    </div>
+    <p class="smallprint">Kp 0–3 quiet · 4 active · 5+ geomagnetic storm (aurora likely at high latitudes)</p>
+  </section>
+</main>
+
+<footer>
+  <span>Static dashboard · news refreshed every 30 min by GitHub Actions · quakes/markets fetched live in your browser</span>
+  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · USGS · CoinGecko · Frankfurter · NOAA</span>
+</footer>
+
+<script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
