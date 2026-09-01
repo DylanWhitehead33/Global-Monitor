@@ -364,6 +364,25 @@ function conflictTier(i) {
   return "LOW";
 }
 const OVL_COLORS = { nuclear: "#ff4d6d", military: "#4d9fff", choke: "#d98cff" };
+/* Operating country -> ISO flag code, from the base's country/operator label */
+function operatorFlag(c) {
+  if (/^(US|United States)/.test(c)) return "us";
+  if (/^United Kingdom/.test(c)) return "gb";
+  if (/^France/.test(c)) return "fr";
+  if (/^Russia/.test(c)) return "ru";
+  if (/^China/.test(c)) return "cn";
+  if (/^India/.test(c)) return "in";
+  if (/^Cambodia/.test(c)) return "kh";
+  if (/^Turkey/.test(c)) return "tr";
+  if (/^Israel/.test(c)) return "il";
+  if (/^North Korea/.test(c)) return "kp";
+  if (/^Pakistan/.test(c)) return "pk";
+  if (/^Italy/.test(c)) return "it";
+  if (/^Germany/.test(c)) return "de";
+  if (/^Belgium/.test(c)) return "be";
+  if (/^Netherlands/.test(c)) return "nl";
+  return null;
+}
 function overlayDefs() {
   const defs = [];
   if (OVL.ships) defs.push(...(shipData.ships ?? []).map((s) => ({
@@ -524,11 +543,22 @@ function initSatMap() {
       radius: 5, color: OVL_COLORS.nuclear, weight: 1.5, fillColor: OVL_COLORS.nuclear, fillOpacity: 0.55,
     }).bindPopup(`<b>☢ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>publicly reported, approximate</i>`)
   ));
-  satLayers.military = L.layerGroup(MILITARY_BASES.map((s) =>
-    L.circleMarker([s.lat, s.lng], {
+  satLayers.military = L.layerGroup(MILITARY_BASES.map((s) => {
+    const code = operatorFlag(s.c);
+    const popup = `<b>▲ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>major base, curated list</i>`;
+    if (code) {
+      return L.marker([s.lat, s.lng], {
+        icon: L.divIcon({
+          className: "flag-icon",
+          html: `<img src="https://flagcdn.com/w40/${code}.png" alt="${esc(s.c)}">`,
+          iconSize: [18, 18], iconAnchor: [9, 9],
+        }),
+      }).bindPopup(popup);
+    }
+    return L.circleMarker([s.lat, s.lng], {
       radius: 5, color: OVL_COLORS.military, weight: 1.5, fillColor: OVL_COLORS.military, fillOpacity: 0.55,
-    }).bindPopup(`<b>▲ ${esc(s.n)}</b><br>${esc(s.c)}<br><i>major base, curated list</i>`)
-  ));
+    }).bindPopup(popup);
+  }));
   satLayers.choke = L.layerGroup(CHOKE_POINTS.map((s) =>
     L.circleMarker([s.lat, s.lng], {
       radius: 7, color: OVL_COLORS.choke, weight: 1.5, fillColor: OVL_COLORS.choke, fillOpacity: 0.5,
@@ -541,8 +571,25 @@ function initSatMap() {
 }
 
 const satLayers = {};
+/* Leaflet draws polygons that cross the 180° antimeridian (Russia, Fiji) as a
+   band across the whole map. Shift such rings into the 0..360 range so they
+   wrap correctly. The globe view needs no fix. */
+function unwrapAntimeridian(feature) {
+  const fixRing = (ring) => {
+    const lngs = ring.map((c) => c[0]);
+    if (Math.max(...lngs) - Math.min(...lngs) > 180) {
+      return ring.map(([x, y]) => [x < 0 ? x + 360 : x, y]);
+    }
+    return ring;
+  };
+  const g = feature.geometry;
+  let geom = g;
+  if (g?.type === "Polygon") geom = { type: "Polygon", coordinates: g.coordinates.map(fixRing) };
+  else if (g?.type === "MultiPolygon") geom = { type: "MultiPolygon", coordinates: g.coordinates.map((poly) => poly.map(fixRing)) };
+  return { ...feature, geometry: geom };
+}
 function buildMapTension() {
-  return L.geoJSON(tensionFeatures(), {
+  return L.geoJSON(tensionFeatures().map(unwrapAntimeridian), {
     style: (f) => ({
       color: "#0b2a38", weight: 1,
       fillColor: tensionColor(f.__t.score), fillOpacity: 0.5,
