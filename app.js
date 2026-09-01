@@ -247,6 +247,7 @@ async function loadTension() {
 
 /* ---------- tanker snapshot (data/shipping.json, refreshed by the Action) ---------- */
 let shipData = { updated: null, note: null, ships: [] };
+let shipTracks = {};
 async function loadShips() {
   try {
     const res = await fetch(`data/shipping.json?cb=${Math.floor(Date.now() / 600000)}`);
@@ -255,6 +256,26 @@ async function loadShips() {
   } catch (e) {
     console.error("shipping.json load failed:", e);
   }
+  try {
+    const res = await fetch(`data/ship-tracks.json?cb=${Math.floor(Date.now() / 600000)}`);
+    if (res.ok) shipTracks = await res.json();
+  } catch { /* trails are optional */ }
+}
+/* dead-reckoning: project a position forward along course cog (deg) by sog knots for hrs hours */
+function projectPos(lat, lng, cog, sog, hrs) {
+  const distDeg = (sog * hrs) / 60; // nautical miles -> degrees latitude
+  const rad = (cog * Math.PI) / 180;
+  const dLat = distDeg * Math.cos(rad);
+  const dLng = (distDeg * Math.sin(rad)) / Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  return [lat + dLat, lng + dLng];
+}
+function shipTrail(s) {
+  const hist = shipTracks[s.mmsi];
+  if (!hist || hist.length < 1) return null;
+  const pts = [...hist];
+  const last = pts[pts.length - 1];
+  if (!last || Math.abs(last[0] - s.lat) > 0.001 || Math.abs(last[1] - s.lng) > 0.001) pts.push([s.lat, s.lng]);
+  return pts.length >= 2 ? pts : null;
 }
 function shipTypeName(t) {
   if (t === 84) return "LNG/LPG gas carrier";
@@ -297,13 +318,15 @@ function countryTension() {
   for (const p of tensionPlaces) {
     const key = p.place in PLACE_COUNTRY ? PLACE_COUNTRY[p.place] : p.place.trim();
     if (!key) continue;
-    const cur = byCountry.get(key) ?? { score: 0, count: 0 };
-    cur.score += p.score;
+    const cur = byCountry.get(key) ?? { raw: 0, count: 0 };
+    cur.raw += p.raw ?? p.score * 10;  // older data files lack raw — approximate
     cur.count += p.count;
     byCountry.set(key, cur);
   }
-  const max = Math.max(0.001, ...[...byCountry.values()].map((c) => c.score));
-  for (const c of byCountry.values()) c.score = c.score / max;
+  for (const c of byCountry.values()) {
+    c.score = conflictIntensity(c.raw);
+    c.tier = conflictTier(c.score);
+  }
   return byCountry;
 }
 function tensionFeatures() {
@@ -325,9 +348,20 @@ function lerpHex(a, b, t) {
   const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
   return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
 }
-/* green (low) -> gold (mid) -> red (high) */
+/* green (low) -> gold (mid) -> red (war) */
 function tensionColor(s) {
-  return s < 0.5 ? lerpHex("#35c98f", "#ffc65c", s * 2) : lerpHex("#ffc65c", "#f0716e", (s - 0.5) * 2);
+  return s < 0.5 ? lerpHex("#35c98f", "#ffc65c", s * 2) : lerpHex("#ffc65c", "#e5484d", (s - 0.5) * 2);
+}
+/* Absolute conflict scale: raw = keyword-weighted headline volume over the
+   trailing 30 days. WAR_RAW is the volume at which a country reads as an
+   active war zone (full red). */
+const WAR_RAW = 60;
+function conflictIntensity(raw) { return Math.min(1, raw / WAR_RAW); }
+function conflictTier(i) {
+  if (i >= 0.75) return "ACTIVE CONFLICT / WAR";
+  if (i >= 0.4) return "HIGH TENSION";
+  if (i >= 0.15) return "ELEVATED";
+  return "LOW";
 }
 const OVL_COLORS = { nuclear: "#ff4d6d", military: "#4d9fff", choke: "#d98cff" };
 function overlayDefs() {
@@ -367,10 +401,21 @@ function globePoints() {
     ...overlayDefs(),
   ];
 }
+function shipPaths() {
+  if (!OVL.ships) return [];
+  const paths = [];
+  for (const s of shipData.ships ?? []) {
+    const pts = shipTrail(s);
+    if (pts) paths.push({ pts });
+    if (paths.length >= 2500) break;
+  }
+  return paths;
+}
 function refreshGlobe() {
   if (!globeInstance) return;
   globeInstance.pointsData(globePoints());
   globeInstance.polygonsData(OVL.tension ? tensionFeatures() : []);
+  globeInstance.pathsData(shipPaths());
 }
 function initGlobe() {
   const el = $("globe");
@@ -394,8 +439,14 @@ function initGlobe() {
     .polygonCapColor((d) => hexToRgba(tensionColor(d.__t.score), 0.55))
     .polygonSideColor(() => "rgba(0, 229, 255, 0.06)")
     .polygonStrokeColor(() => "#0b2a38")
+    .pathsData([])
+    .pathPoints("pts")
+    .pathPointAlt(0.002)
+    .pathColor(() => "rgba(255, 158, 61, 0.5)")
+    .pathStroke(1.5)
+    .pathTransitionDuration(0)
     .polygonLabel((d) =>
-      `<b>${esc(d.__t.name)}</b><br>Tension index: ${(d.__t.score * 100).toFixed(0)} / 100` +
+      `<b>${esc(d.__t.name)}</b><br>Conflict level: ${d.__t.tier} (${(d.__t.score * 100).toFixed(0)}/100)` +
       `<br><i>${d.__t.count} conflict-related headline${d.__t.count === 1 ? "" : "s"}, trailing 30 days</i>`)
     .width(el.clientWidth)
     .height(el.clientHeight);
@@ -497,18 +548,35 @@ function buildMapTension() {
       fillColor: tensionColor(f.__t.score), fillOpacity: 0.5,
     }),
     onEachFeature: (f, layer) => layer.bindPopup(
-      `<b>${esc(f.__t.name)}</b><br>Tension index: ${(f.__t.score * 100).toFixed(0)} / 100` +
+      `<b>${esc(f.__t.name)}</b><br>Conflict level: ${f.__t.tier} (${(f.__t.score * 100).toFixed(0)}/100)` +
       `<br><i>${f.__t.count} conflict-related headline${f.__t.count === 1 ? "" : "s"}, trailing 30 days</i>`),
   });
 }
+function shipDivIcon(cog) {
+  return L.divIcon({
+    className: "ship-icon",
+    html: `<svg width="14" height="14" viewBox="0 0 24 24" style="transform:rotate(${Math.round(cog ?? 0)}deg)">` +
+      `<path d="M12 1 L17 10 L17 18 L12 23 L7 18 L7 10 Z" fill="#ff9e3d" stroke="#3d2506" stroke-width="1.5"/></svg>`,
+    iconSize: [14, 14], iconAnchor: [7, 7],
+  });
+}
 function buildMapShips() {
-  return L.layerGroup((shipData.ships ?? []).map((s) =>
-    L.circleMarker([s.lat, s.lng], {
-      radius: 3, color: "#ff9e3d", weight: 1, fillColor: "#ff9e3d", fillOpacity: 0.7,
-    }).bindPopup(`<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
-      `${s.sog != null ? `<br>${s.sog.toFixed(1)} kn` : ""}` +
-      `<br><i>snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`)
-  ));
+  const items = [];
+  for (const s of shipData.ships ?? []) {
+    const popup = `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
+      `${s.sog != null ? `<br>${s.sog.toFixed(1)} kn${s.cog != null ? ` · course ${Math.round(s.cog)}°` : ""}` : ""}` +
+      `<br><i>snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`;
+    // trailing line: where it came from
+    const trail = shipTrail(s);
+    if (trail) items.push(L.polyline(trail, { color: "#ff9e3d", weight: 1.5, opacity: 0.45 }));
+    // dashed projection: where it's going (dead reckoning, next ~2h)
+    if (s.cog != null && s.sog > 1) {
+      items.push(L.polyline([[s.lat, s.lng], projectPos(s.lat, s.lng, s.cog, s.sog, 2)],
+        { color: "#ff9e3d", weight: 1.5, opacity: 0.8, dashArray: "3 5" }));
+    }
+    items.push(L.marker([s.lat, s.lng], { icon: shipDivIcon(s.cog) }).bindPopup(popup));
+  }
+  return L.layerGroup(items);
 }
 function applyMapOverlays() {
   if (!satMapInstance) return;
