@@ -33,6 +33,12 @@ jobs:
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
         run: node scripts/fetch-shipping.mjs
 
+      - name: Generate voice debrief (ElevenLabs)
+        env:
+          ELEVENLABS_KEY: ${{ secrets.ELEVENLABS_KEY }}
+          VOICE_MIN_HOURS: "12"
+        run: node scripts/fetch-voice.mjs
+
       - name: Commit updated data
         run: |
           git config user.name "github-actions[bot]"
