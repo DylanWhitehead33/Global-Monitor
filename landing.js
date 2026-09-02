@@ -102,8 +102,21 @@
   /* ---------- speech: sentence-by-sentence queue for natural pacing ---------- */
   let speaking = false;
   let cancelled = false;
+  // Split into sentences WITHOUT breaking on decimal points ("2.9 percent").
+  // A sentence ends only at . ! ? followed by whitespace and a capital/quote.
+  // Returns segments with their start index in the full text, for transcript sync.
   function splitSentences(text) {
-    return text.match(/[^.!?]+[.!?]+["']?\s*/g) ?? [text];
+    let re;
+    try { re = new RegExp('(?<=[.!?…])\\s+(?=[A-Z"“])', "g"); }
+    catch (_) { return [{ s: text, start: 0 }]; }   // old Safari: speak as one piece
+    const out = [];
+    let start = 0;
+    for (const m of text.matchAll(re)) {
+      out.push({ s: text.slice(start, m.index), start });
+      start = m.index + m[0].length;
+    }
+    out.push({ s: text.slice(start), start });
+    return out.filter((seg) => seg.s.trim());
   }
   async function present(text, done) {
     speaking = true;
@@ -133,28 +146,29 @@
     }
 
     const sentences = splitSentences(text);
-    let offset = 0;      // chars of fully spoken sentences, for transcript sync
+    let spokenChars = 0;   // for the first-sentence watchdog
     let idx = 0;
     const speakNext = () => {
       if (cancelled || idx >= sentences.length) return finish();
-      const sentence = sentences[idx++];
-      const u = new SpeechSynthesisUtterance(sentence.trim());
+      const seg = sentences[idx++];
+      const u = new SpeechSynthesisUtterance(seg.s.trim());
       if (voice) u.voice = voice;
       u.lang = voice?.lang ?? "en-GB";
-      u.rate = 1.03;     // natural conversational pace
+      u.rate = 1.14;     // brisk, conversational pace
       u.pitch = 1.0;     // no artificial deepening — sounds far less synthetic
       let progressed = false;
       u.onboundary = (ev) => {
         progressed = true;
-        const ci = offset + (ev.charIndex ?? 0);
+        const ci = seg.start + (ev.charIndex ?? 0);
+        spokenChars = ci;
         textEl.textContent = text.slice(0, ci);
         const word = text.slice(ci).split(/\s/)[0] ?? "";
         pulse(word.length);
       };
       const advance = () => {
-        offset += sentence.length;
-        textEl.textContent = text.slice(0, offset);
-        setTimeout(speakNext, 140);   // a small breath between sentences
+        spokenChars = seg.start + seg.s.length;
+        textEl.textContent = text.slice(0, spokenChars);
+        setTimeout(speakNext, 30);   // near-seamless hand-off between sentences
       };
       u.onend = advance;
       u.onerror = advance;
@@ -163,7 +177,7 @@
       // fall back to typing the whole script
       if (idx === 1) {
         setTimeout(() => {
-          if (!progressed && !cancelled && offset === 0) {
+          if (!progressed && !cancelled && spokenChars === 0) {
             try { synth.cancel(); } catch (_) { /* ignore */ }
             let i = 0;
             const t = setInterval(() => {
