@@ -13,6 +13,26 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div id="landing" hidden>
+  <i class="lcorner lc1"></i><i class="lcorner lc2"></i><i class="lcorner lc3"></i><i class="lcorner lc4"></i>
+  <div class="lstatus" id="lp-status">SECURE CHANNEL · STANDING BY</div>
+  <div class="lstage">
+    <div class="reactor-wrap" id="lp-orb">
+      <i class="ltick"></i><i class="lring"></i><i class="lring r2"></i><i class="lring r3"></i><i class="lcore"></i>
+    </div>
+    <div>
+      <h1 class="ltitle">GLOBAL MONITORING SYSTEM</h1>
+      <div class="lsub" id="lp-sub">SECURE VOICE CHANNEL · STANDING BY</div>
+    </div>
+    <div class="lspeech"><span id="lp-text">Good evening. You are connected to the Global Monitoring System. All feeds are operational. Stand by for your situation debrief.</span><span class="lcursor" id="lp-cursor"></span></div>
+    <div class="lwave" id="lp-wave"></div>
+    <div class="lbtns">
+      <button class="lbtn" id="lp-brief">▶ &nbsp;COMMENCE DEBRIEF</button>
+      <button class="lbtn ghost" id="lp-skip">PROCEED TO DASHBOARD</button>
+    </div>
+    <div class="lhint">DEBRIEF COVERS: TOP HEADLINES · CONFLICT ASSESSMENT · MARKETS · SEISMIC · SPACE WEATHER</div>
+  </div>
+</div>
 <header id="topbar">
   <div class="brand">
     <span class="reactor" aria-hidden="true"></span>
@@ -131,5 +151,6 @@
 <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
 <script src="overlays.js"></script>
 <script src="app.js"></script>
+<script src="landing.js"></script>
 </body>
 </html>

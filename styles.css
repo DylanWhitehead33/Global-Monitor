@@ -314,6 +314,58 @@ a:hover { color: var(--accent); text-shadow: 0 0 8px rgba(0, 229, 255, 0.6); }
 #panel-space { min-height: 0; }
 #panel-space .smallprint { padding: 0 16px; }
 
+/* ---------- landing / debrief overlay ---------- */
+#landing {
+  position: fixed; inset: 0; z-index: 200;
+  background:
+    radial-gradient(900px 500px at 50% 30%, rgba(0, 229, 255, 0.08), transparent 60%),
+    linear-gradient(rgba(0, 229, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.03) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, 44px 44px, 44px 44px, auto;
+  opacity: 1; transition: opacity .8s ease;
+}
+#landing[hidden] { display: none; }
+#landing.dismissing { opacity: 0; pointer-events: none; }
+.lstage { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; text-align: center; padding: 20px; }
+.lcorner { position: absolute; width: 26px; height: 26px; border-color: var(--panel-edge-hard); }
+.lc1 { top: 14px; left: 14px; border-top: 2px solid; border-left: 2px solid; }
+.lc2 { top: 14px; right: 14px; border-top: 2px solid; border-right: 2px solid; }
+.lc3 { bottom: 14px; left: 14px; border-bottom: 2px solid; border-left: 2px solid; }
+.lc4 { bottom: 14px; right: 14px; border-bottom: 2px solid; border-right: 2px solid; }
+.lstatus { position: absolute; top: 20px; left: 0; right: 0; text-align: center; font-size: 10px; letter-spacing: 3px; color: var(--ink-3); font-family: var(--mono); }
+.reactor-wrap { position: relative; width: 180px; height: 180px; transition: transform .12s ease; }
+.lring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--panel-edge);
+  box-shadow: 0 0 30px rgba(0, 229, 255, .25), inset 0 0 30px rgba(0, 229, 255, .15); }
+.lring.r2 { inset: 17px; border-style: dashed; border-color: var(--panel-edge-hard); animation: lspin 24s linear infinite; }
+.lring.r3 { inset: 40px; border-width: 3px; }
+@keyframes lspin { to { transform: rotate(360deg); } }
+.lcore { position: absolute; inset: 60px; border-radius: 50%;
+  background: radial-gradient(circle, #eaffff 0 20%, var(--accent) 45%, rgba(0, 229, 255, .12) 75%, transparent 78%);
+  box-shadow: 0 0 40px var(--accent), 0 0 90px rgba(0, 229, 255, .5);
+  transition: transform .1s ease, box-shadow .1s ease; }
+.ltick { position: absolute; inset: -12px; border-radius: 50%; opacity: .8;
+  background: conic-gradient(var(--accent) 0 8deg, transparent 8deg 30deg, var(--accent) 30deg 34deg, transparent 34deg 120deg, var(--accent) 120deg 126deg, transparent 126deg 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 62%, #000 63% 66%, transparent 67%);
+  mask: radial-gradient(circle, transparent 62%, #000 63% 66%, transparent 67%); }
+.ltitle { font-family: var(--display); font-size: 24px; letter-spacing: 8px; font-weight: 700; color: #eaf9ff; text-shadow: 0 0 18px rgba(0, 229, 255, .6); margin: 0; }
+.lsub { font-size: 11px; letter-spacing: 5px; color: var(--accent); opacity: .8; font-family: var(--mono); margin-top: 6px; }
+.lspeech { max-width: 640px; min-height: 76px; font-size: 16.5px; line-height: 1.6; color: var(--ink);
+  border: 1px solid var(--panel-edge); border-radius: 6px; padding: 14px 22px; background: rgba(6, 20, 32, .8); }
+.lcursor { display: inline-block; width: 9px; height: 17px; background: var(--accent); vertical-align: -2px;
+  box-shadow: 0 0 8px var(--accent); animation: pulse 1.1s steps(2) infinite; }
+.lwave { display: flex; gap: 4px; align-items: center; height: 34px; }
+.lwave i { width: 4px; height: 4px; border-radius: 2px; background: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 229, 255, .8); display: block; transition: height .12s ease; }
+.lbtns { display: flex; gap: 16px; }
+.lbtn { font-family: var(--display); font-size: 12px; letter-spacing: 3px; font-weight: 700; color: var(--accent);
+  border: 1px solid var(--panel-edge-hard); background: rgba(0, 229, 255, .07); border-radius: 4px;
+  padding: 12px 26px; cursor: pointer; text-shadow: 0 0 8px rgba(0, 229, 255, .5); box-shadow: 0 0 14px rgba(0, 229, 255, .15); }
+.lbtn:hover { background: rgba(0, 229, 255, .14); }
+.lbtn.ghost { color: var(--ink-3); border-color: rgba(77, 113, 134, .5); background: none; text-shadow: none; box-shadow: none; }
+.lbtn.ghost:hover { color: var(--ink); }
+.lhint { font-size: 10px; letter-spacing: 2px; color: var(--ink-3); font-family: var(--mono); }
+
 /* ---------- footer ---------- */
 footer {
   display: flex; flex-direction: column; gap: 4px;
