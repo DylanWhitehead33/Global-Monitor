@@ -36,7 +36,7 @@ jobs:
       - name: Generate voice debrief (ElevenLabs)
         env:
           ELEVENLABS_KEY: ${{ secrets.ELEVENLABS_KEY }}
-          VOICE_MIN_HOURS: "12"
+          VOICE_MIN_HOURS: "36"
         run: node scripts/fetch-voice.mjs
 
       - name: Commit updated data
