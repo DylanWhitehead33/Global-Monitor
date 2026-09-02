@@ -386,7 +386,7 @@ function operatorFlag(c) {
 }
 function overlayDefs() {
   const defs = [];
-  if (OVL.ships) defs.push(...(shipData.ships ?? []).map((s) => ({
+  if (OVL.ships) defs.push(...(shipData.ships ?? []).slice(0, 2000).map((s) => ({
     lat: s.lat, lng: s.lng, color: "#ff9e3d", r: 0.28, size: 0.02,
     label: `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
            `<br><i>${s.sog != null ? s.sog.toFixed(1) + " kn · " : ""}snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`,
@@ -427,7 +427,7 @@ function shipPaths() {
   for (const s of shipData.ships ?? []) {
     const pts = shipTrail(s);
     if (pts) paths.push({ pts });
-    if (paths.length >= 2500) break;
+    if (paths.length >= 600) break;
   }
   return paths;
 }
@@ -490,7 +490,7 @@ function initSatMap() {
     el.innerHTML = `<div class="globe-fallback">Map library could not be loaded.<br>Check your connection and reload.</div>`;
     return null;
   }
-  const map = L.map(el, { worldCopyJump: true, minZoom: 2, zoomControl: true })
+  const map = L.map(el, { worldCopyJump: true, minZoom: 2, zoomControl: true, preferCanvas: true })
     .setView([25, 10], 2);
 
   const imagery = L.tileLayer(
@@ -577,6 +577,14 @@ function initSatMap() {
     }).bindPopup(`<b>⬖ ${esc(s.n)}</b><br>${esc(s.note)}`)
   ));
 
+  // re-render ships at the right detail level as the user pans/zooms
+  let shipRedraw = null;
+  map.on("zoomend moveend", () => {
+    if (!OVL.ships || !satLayers.ships) return;
+    clearTimeout(shipRedraw);
+    shipRedraw = setTimeout(() => renderShipsInto(satLayers.ships), 150);
+  });
+
   satMapInstance = map;
   applyMapOverlays();
   return map;
@@ -619,23 +627,49 @@ function shipDivIcon(cog) {
     iconSize: [14, 14], iconAnchor: [7, 7],
   });
 }
-function buildMapShips() {
-  const items = [];
-  for (const s of shipData.ships ?? []) {
-    const popup = `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
-      `${s.sog != null ? `<br>${s.sog.toFixed(1)} kn${s.cog != null ? ` · course ${Math.round(s.cog)}°` : ""}` : ""}` +
-      `<br><i>snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`;
-    // trailing line: where it came from
-    const trail = shipTrail(s);
-    if (trail) items.push(L.polyline(trail, { color: "#ff9e3d", weight: 1.5, opacity: 0.45 }));
-    // dashed projection: where it's going (dead reckoning, next ~2h)
-    if (s.cog != null && s.sog > 1) {
-      items.push(L.polyline([[s.lat, s.lng], projectPos(s.lat, s.lng, s.cog, s.sog, 2)],
-        { color: "#ff9e3d", weight: 1.5, opacity: 0.8, dashArray: "3 5" }));
+/* Ships render adaptively: thousands of tankers as fast canvas dots when
+   zoomed out; full ship icons + trails + projections for the visible area
+   once zoomed in. Rebuilt on pan/zoom while the layer is on. */
+const SHIP_ICON_ZOOM = 5;      // zoom level where dots become icons
+const SHIP_ICON_MAX = 400;     // max detailed ships drawn at once
+function shipPopup(s) {
+  return `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
+    `${s.sog != null ? `<br>${s.sog.toFixed(1)} kn${s.cog != null ? ` · course ${Math.round(s.cog)}°` : ""}` : ""}` +
+    `<br><i>snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`;
+}
+function renderShipsInto(group) {
+  group.clearLayers();
+  const map = satMapInstance;
+  if (!map) return;
+  const ships = shipData.ships ?? [];
+  if (map.getZoom() < SHIP_ICON_ZOOM) {
+    // overview: lightweight canvas dots (handles thousands smoothly)
+    for (const s of ships) {
+      group.addLayer(L.circleMarker([s.lat, s.lng], {
+        radius: 2.5, color: "#ff9e3d", weight: 1, fillColor: "#ff9e3d", fillOpacity: 0.75,
+      }).bindPopup(shipPopup(s)));
     }
-    items.push(L.marker([s.lat, s.lng], { icon: shipDivIcon(s.cog) }).bindPopup(popup));
+  } else {
+    // zoomed in: icons, trails, and projections for what's on screen
+    const bounds = map.getBounds().pad(0.25);
+    let n = 0;
+    for (const s of ships) {
+      if (!bounds.contains([s.lat, s.lng])) continue;
+      if (++n > SHIP_ICON_MAX) break;
+      const trail = shipTrail(s);
+      if (trail) group.addLayer(L.polyline(trail, { color: "#ff9e3d", weight: 1.5, opacity: 0.45 }));
+      if (s.cog != null && s.sog > 1) {
+        group.addLayer(L.polyline([[s.lat, s.lng], projectPos(s.lat, s.lng, s.cog, s.sog, 2)],
+          { color: "#ff9e3d", weight: 1.5, opacity: 0.8, dashArray: "3 5" }));
+      }
+      group.addLayer(L.marker([s.lat, s.lng], { icon: shipDivIcon(s.cog) }).bindPopup(shipPopup(s)));
+    }
   }
-  return L.layerGroup(items);
+}
+function buildMapShips() {
+  const group = L.layerGroup();
+  renderShipsInto(group);
+  return group;
 }
 function applyMapOverlays() {
   if (!satMapInstance) return;
@@ -660,10 +694,14 @@ function initOverlayToggles() {
         $("tension-scale").hidden = !box.checked;
         if (box.checked) await ensureCountries();
       }
-      if (key === "ships" && box.checked && !(shipData.ships?.length)) {
-        $("view-note").textContent = shipData.note === "no-key"
-          ? "tanker layer needs a free AISSTREAM_KEY — see README"
-          : "no tanker snapshot yet — appears after the next data refresh";
+      if (key === "ships" && box.checked) {
+        if (!(shipData.ships?.length)) {
+          $("view-note").textContent = shipData.note === "no-key"
+            ? "tanker layer needs a free AISSTREAM_KEY — see README"
+            : "no tanker snapshot yet — appears after the next data refresh";
+        } else {
+          $("view-note").textContent = `${shipData.ships.length} tankers · zoom in for ship icons & trails`;
+        }
       }
       refreshGlobe();
       applyMapOverlays();
