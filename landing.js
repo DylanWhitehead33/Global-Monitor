@@ -14,9 +14,7 @@
   if (seen) return;               // straight to the dashboard
   landing.hidden = false;
 
-  const hourNow = new Date().getHours();
-  const salute = hourNow < 12 ? "Good morning." : hourNow < 18 ? "Good afternoon." : "Good evening.";
-  const dayPart = hourNow < 12 ? "this morning" : hourNow < 18 ? "this afternoon" : "tonight";
+  const salute = "Good evening, sir.";
 
   const textEl = document.getElementById("lp-text");
   const subEl = document.getElementById("lp-sub");
@@ -198,14 +196,18 @@
     } catch (_) { return null; }
   }
   async function buildDebrief() {
-    const parts = [`${salute} Here is your situation debrief.`];
+    // One continuous thought: greeting, then the last 24 hours woven together
+    // with connective phrasing — no numbered items, no section labels.
+    const parts = [salute];
 
     const news = await fetchJSON("data/news.json");
     const world = (news?.categories?.world ?? []).slice(0, 3).map((i) => cleanForSpeech(i.t));
     if (world.length) {
-      parts.push(`Leading the headlines ${dayPart}: ${world[0]}.`);
-      if (world[1]) parts.push(`Also developing: ${world[1]}.`);
-      if (world[2]) parts.push(`And elsewhere, ${world[2]}.`);
+      parts.push(`Over the last twenty-four hours, the story leading the world is this: ${world[0]}.`);
+      if (world[1]) parts.push(`Elsewhere, ${lowerFirst(world[1])}.`);
+      if (world[2]) parts.push(`And ${lowerFirst(world[2])}.`);
+    } else {
+      parts.push("Over the last twenty-four hours, the news picture has been unusually quiet.");
     }
 
     try {
@@ -213,11 +215,11 @@
         const ranked = [...countryTension().entries()].sort((a, b) => b[1].score - a[1].score).slice(0, 3);
         if (ranked.length) {
           const [topName, topT] = ranked[0];
-          const tierWords = { "ACTIVE CONFLICT / WAR": "at active conflict levels", "HIGH TENSION": "under high tension", "ELEVATED": "elevated", "LOW": "relatively quiet" };
-          let line = `Turning to the conflict picture, ${topName} is running hottest, ${tierWords[topT.tier] ?? "elevated"}`;
+          const tierWords = { "ACTIVE CONFLICT / WAR": "at active conflict levels", "HIGH TENSION": "under high tension", "ELEVATED": "elevated but contained", "LOW": "relatively quiet" };
+          let line = `All of which keeps the conflict picture centred on ${topName}, ${tierWords[topT.tier] ?? "elevated"}`;
           const rest = ranked.slice(1).map(([n]) => n);
-          if (rest.length) line += `, with ${naturalList(rest)} also worth watching`;
-          parts.push(line + ", based on the last thirty days of reporting.");
+          if (rest.length) line += `, though ${naturalList(rest)} ${rest.length > 1 ? "are" : "is"} worth keeping an eye on as well`;
+          parts.push(line + ".");
         }
       }
     } catch (_) { /* dashboard not ready — skip */ }
@@ -226,16 +228,17 @@
     if (mkts?.us?.length) {
       const phrase = (m) => {
         const name = m.name.replace(/\s*·.*/, "").replace(/\s*\(.*\)/, "");
-        return `the ${name} is ${m.chgPct >= 0 ? "up" : "down"} ${Math.abs(m.chgPct).toFixed(1)} percent`;
+        return `the ${name} ${m.chgPct >= 0 ? "up" : "down"} ${Math.abs(m.chgPct).toFixed(1)} percent`;
       };
-      parts.push(`In the markets, ${naturalList(mkts.us.slice(0, 3).map(phrase))}.`);
+      const tone = mkts.us[0].chgPct >= 0 ? "took it in stride" : "felt the weight of it";
+      parts.push(`The markets, for their part, ${tone} — ${naturalList(mkts.us.slice(0, 3).map(phrase))}.`);
     }
 
     try {
       if (typeof quakePoints !== "undefined" && quakePoints.length) {
         const top = quakePoints[0];
-        let line = `On the seismic front, we have tracked ${quakePoints.length} earthquakes above magnitude two and a half over the past day`;
-        if (top?.mag >= 5) line += `, the strongest a ${top.mag.toFixed(1)} near ${cleanForSpeech(top.place ?? "")}`;
+        let line = `The earth itself has been busier, with ${quakePoints.length} tremors above magnitude two and a half`;
+        if (top?.mag >= 5) line += ` — the strongest a ${top.mag.toFixed(1)} near ${cleanForSpeech(top.place ?? "")}`;
         parts.push(line + ".");
       }
     } catch (_) { /* skip */ }
@@ -244,12 +247,17 @@
     if (kpStatus && !/unavailable/i.test(kpStatus)) {
       const k = kpStatus.toLowerCase();
       parts.push(k.includes("storm")
-        ? `Space weather needs an eye ${dayPart} — a geomagnetic storm is in progress.`
-        : `Space weather is ${k.includes("quiet") ? "quiet" : k}.`);
+        ? "And overhead, conditions are less settled — a geomagnetic storm is in progress, so expect some noise in the upper atmosphere."
+        : "And overhead, space weather is calm — nothing of concern.");
     }
 
-    parts.push("That completes your debrief. The board is yours.");
+    parts.push("That is the shape of the day, sir. The board is yours.");
     return parts.join(" ");
+  }
+  function lowerFirst(s) {
+    // don't lowercase proper nouns/acronyms at the start (e.g. "US", "NATO", "Israeli")
+    if (/^[A-Z]{2,}/.test(s) || /^(US|UK|EU|UN|NATO|China|Russia|Ukraine|Israel|Iran|India|Japan|Britain|Europe|America|African|Asian|Israeli|Russian|Ukrainian|Chinese|American|British|Iranian|Indian|French|German)\b/.test(s)) return s;
+    return s.charAt(0).toLowerCase() + s.slice(1);
   }
 
   /* ---------- flow ---------- */
