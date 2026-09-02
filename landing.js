@@ -1,7 +1,8 @@
 /* Landing / voice debrief overlay for the Global Monitoring System.
- * Uses the browser's built-in speech synthesis (British English voice when
- * available). Shown once per visit (sessionStorage). The orb pulses on each
- * spoken word; if no voice is available the transcript still types out.
+ * Speaks with the browser's best British English voice (waits for voices to
+ * load), sentence by sentence at a natural pace. Shown once per visit.
+ * The orb pulses on each spoken word; if no voice is available the
+ * transcript still types out.
  */
 "use strict";
 (function () {
@@ -15,6 +16,7 @@
 
   const hourNow = new Date().getHours();
   const salute = hourNow < 12 ? "Good morning." : hourNow < 18 ? "Good afternoon." : "Good evening.";
+  const dayPart = hourNow < 12 ? "this morning" : hourNow < 18 ? "this afternoon" : "tonight";
 
   const textEl = document.getElementById("lp-text");
   const subEl = document.getElementById("lp-sub");
@@ -25,7 +27,7 @@
   const briefBtn = document.getElementById("lp-brief");
   const skipBtn = document.getElementById("lp-skip");
 
-  textEl.textContent = `${salute} You are connected to the Global Monitoring System. All feeds are operational. Stand by for your situation debrief.`;
+  textEl.textContent = `${salute} You are connected to the Global Monitoring System. All feeds are operational — ready for your debrief when you are.`;
 
   // status clock
   setInterval(() => {
@@ -64,91 +66,130 @@
     }, 130);
   }
 
-  /* ---------- voice ---------- */
-  function pickVoice() {
-    const voices = window.speechSynthesis?.getVoices?.() ?? [];
-    const prefer = [
-      (v) => v.lang === "en-GB" && /male|ryan|daniel|george|arthur|brian/i.test(v.name),
-      (v) => v.lang === "en-GB",
+  /* ---------- voice selection: wait for voices, prefer natural British ---------- */
+  function voicesReady() {
+    return new Promise((resolve) => {
+      const synth = window.speechSynthesis;
+      if (!synth) return resolve([]);
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve(synth.getVoices());
+      };
+      const v = synth.getVoices();
+      if (v.length) return finish();
+      synth.addEventListener?.("voiceschanged", finish, { once: true });
+      setTimeout(finish, 1500);   // don't wait forever
+    });
+  }
+  function pickVoice(voices) {
+    const rank = [
+      (v) => /Google UK English Male/i.test(v.name),
+      (v) => /en[-_]GB/i.test(v.lang) && /natural|neural|online/i.test(v.name),
+      (v) => /en[-_]GB/i.test(v.lang) && /ryan|thomas|daniel|george|arthur|brian|male/i.test(v.name),
+      (v) => /Google UK English/i.test(v.name),
       (v) => /en[-_]GB/i.test(v.lang),
+      (v) => /Google US English/i.test(v.name),
+      (v) => v.lang?.startsWith("en") && /natural|neural|online/i.test(v.name),
       (v) => v.lang?.startsWith("en"),
     ];
-    for (const test of prefer) {
+    for (const test of rank) {
       const v = voices.find(test);
       if (v) return v;
     }
     return null;
   }
 
+  /* ---------- speech: sentence-by-sentence queue for natural pacing ---------- */
   let speaking = false;
-  function speak(text, { onWord, onDone }) {
-    const synth = window.speechSynthesis;
-    if (!synth || typeof SpeechSynthesisUtterance === "undefined") { onDone?.(); return false; }
-    const u = new SpeechSynthesisUtterance(text);
-    const v = pickVoice();
-    if (v) u.voice = v;
-    u.rate = 0.96;
-    u.pitch = 0.82;   // measured, lower register
-    u.onboundary = (ev) => { if (ev.name === "word" || ev.charIndex != null) onWord?.(ev.charIndex ?? 0); };
-    u.onend = () => onDone?.();
-    u.onerror = () => onDone?.();
-    synth.cancel();
-    synth.speak(u);
-    return true;
+  let cancelled = false;
+  function splitSentences(text) {
+    return text.match(/[^.!?]+[.!?]+["']?\s*/g) ?? [text];
   }
-
-  // typed transcript synced to speech boundaries (or timed, as fallback)
-  function present(text, done) {
+  async function present(text, done) {
     speaking = true;
+    cancelled = false;
     waveOn();
     textEl.textContent = "";
-    let fallbackTimer = null;
-    let progressed = false;
-    let finished = false;
     const finish = () => {
-      if (finished) return;
-      finished = true;
+      if (!cancelled) textEl.textContent = text;
       speaking = false;
       waveOff();
-      clearInterval(fallbackTimer);
-      textEl.textContent = text;
       done?.();
     };
-    const typeOut = () => {
+
+    const synth = window.speechSynthesis;
+    const voices = await voicesReady();
+    const voice = pickVoice(voices);
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined" || !voices.length) {
+      // no speech engine: type it out at reading pace
       let i = 0;
-      fallbackTimer = setInterval(() => {
+      const t = setInterval(() => {
         i += 3;
         textEl.textContent = text.slice(0, i);
         pulse(4);
-        if (i >= text.length) finish();
+        if (i >= text.length || cancelled) { clearInterval(t); finish(); }
       }, 40);
-    };
-    const ok = speak(text, {
-      onWord: (charIndex) => {
-        progressed = true;
-        textEl.textContent = text.slice(0, charIndex);
-        const word = text.slice(charIndex).split(/\s/)[0] ?? "";
-        pulse(word.length);
-      },
-      onDone: finish,
-    });
-    if (!ok) {
-      typeOut();  // no speech engine: type it out at reading pace
-    } else {
-      // watchdog: some engines accept the utterance but never speak — fall
-      // back to the typed transcript so the debrief always plays out
-      setTimeout(() => {
-        if (!progressed && !finished) {
-          try { window.speechSynthesis.cancel(); } catch (_) { /* ignore */ }
-          typeOut();
-        }
-      }, 3000);
+      return;
     }
+
+    const sentences = splitSentences(text);
+    let offset = 0;      // chars of fully spoken sentences, for transcript sync
+    let idx = 0;
+    const speakNext = () => {
+      if (cancelled || idx >= sentences.length) return finish();
+      const sentence = sentences[idx++];
+      const u = new SpeechSynthesisUtterance(sentence.trim());
+      if (voice) u.voice = voice;
+      u.lang = voice?.lang ?? "en-GB";
+      u.rate = 1.03;     // natural conversational pace
+      u.pitch = 1.0;     // no artificial deepening — sounds far less synthetic
+      let progressed = false;
+      u.onboundary = (ev) => {
+        progressed = true;
+        const ci = offset + (ev.charIndex ?? 0);
+        textEl.textContent = text.slice(0, ci);
+        const word = text.slice(ci).split(/\s/)[0] ?? "";
+        pulse(word.length);
+      };
+      const advance = () => {
+        offset += sentence.length;
+        textEl.textContent = text.slice(0, offset);
+        setTimeout(speakNext, 140);   // a small breath between sentences
+      };
+      u.onend = advance;
+      u.onerror = advance;
+      synth.speak(u);
+      // watchdog for the first sentence only: if nothing is actually voiced,
+      // fall back to typing the whole script
+      if (idx === 1) {
+        setTimeout(() => {
+          if (!progressed && !cancelled && offset === 0) {
+            try { synth.cancel(); } catch (_) { /* ignore */ }
+            let i = 0;
+            const t = setInterval(() => {
+              i += 3;
+              textEl.textContent = text.slice(0, i);
+              pulse(4);
+              if (i >= text.length || cancelled) { clearInterval(t); finish(); }
+            }, 40);
+            idx = sentences.length;   // stop the queue
+          }
+        }, 3000);
+      }
+    };
+    try { synth.cancel(); } catch (_) { /* ignore */ }
+    speakNext();
   }
 
-  /* ---------- debrief script, assembled from live dashboard data ---------- */
+  /* ---------- debrief script: flowing sentences, assembled from live data ---------- */
   function cleanForSpeech(s) {
-    return s.replace(/['’]s?\b/g, (m) => m).replace(/\s+/g, " ").replace(/&amp;/g, "and").trim();
+    return s.replace(/\s+/g, " ").replace(/&amp;/g, "and").replace(/["“”]/g, "").trim().replace(/[.…]+$/, "");
+  }
+  function naturalList(items, joiner = "and") {
+    if (items.length <= 1) return items[0] ?? "";
+    return items.slice(0, -1).join(", ") + `, ${joiner} ` + items[items.length - 1];
   }
   async function fetchJSON(path) {
     try {
@@ -157,54 +198,63 @@
     } catch (_) { return null; }
   }
   async function buildDebrief() {
-    const parts = [];
-    parts.push(`Commencing debrief at ${new Date().toISOString().slice(11, 16).replace(":", "")} hours zulu.`);
+    const parts = [`${salute} Here is your situation debrief.`];
 
     const news = await fetchJSON("data/news.json");
-    const world = news?.categories?.world ?? [];
+    const world = (news?.categories?.world ?? []).slice(0, 3).map((i) => cleanForSpeech(i.t));
     if (world.length) {
-      parts.push("Item one. Principal headlines. " +
-        world.slice(0, 3).map((i) => cleanForSpeech(i.t)).join(". ") + ".");
+      parts.push(`Leading the headlines ${dayPart}: ${world[0]}.`);
+      if (world[1]) parts.push(`Also developing: ${world[1]}.`);
+      if (world[2]) parts.push(`And elsewhere, ${world[2]}.`);
     }
 
-    // conflict assessment from the same data the map uses
     try {
       if (typeof countryTension === "function" && tensionPlaces.length) {
         const ranked = [...countryTension().entries()].sort((a, b) => b[1].score - a[1].score).slice(0, 3);
         if (ranked.length) {
-          parts.push("Item two. Conflict assessment. Highest activity: " +
-            ranked.map(([name, t]) => `${name}, ${t.tier.toLowerCase()}`).join("; ") +
-            ". Based on the trailing thirty days of reporting.");
+          const [topName, topT] = ranked[0];
+          const tierWords = { "ACTIVE CONFLICT / WAR": "at active conflict levels", "HIGH TENSION": "under high tension", "ELEVATED": "elevated", "LOW": "relatively quiet" };
+          let line = `Turning to the conflict picture, ${topName} is running hottest, ${tierWords[topT.tier] ?? "elevated"}`;
+          const rest = ranked.slice(1).map(([n]) => n);
+          if (rest.length) line += `, with ${naturalList(rest)} also worth watching`;
+          parts.push(line + ", based on the last thirty days of reporting.");
         }
       }
-    } catch (_) { /* dashboard not ready — skip item */ }
+    } catch (_) { /* dashboard not ready — skip */ }
 
     const mkts = await fetchJSON("data/markets.json");
     if (mkts?.us?.length) {
-      const line = mkts.us.slice(0, 3).map((m) =>
-        `${m.name.replace(/·.*/, "")} ${m.chgPct >= 0 ? "up" : "down"} ${Math.abs(m.chgPct).toFixed(1)} percent`).join(", ");
-      parts.push(`Item three. Markets. ${line}.`);
+      const phrase = (m) => {
+        const name = m.name.replace(/\s*·.*/, "").replace(/\s*\(.*\)/, "");
+        return `the ${name} is ${m.chgPct >= 0 ? "up" : "down"} ${Math.abs(m.chgPct).toFixed(1)} percent`;
+      };
+      parts.push(`In the markets, ${naturalList(mkts.us.slice(0, 3).map(phrase))}.`);
     }
 
     try {
       if (typeof quakePoints !== "undefined" && quakePoints.length) {
         const top = quakePoints[0];
-        parts.push(`Item four. Seismic. ${quakePoints.length} events above magnitude two point five in the last day` +
-          (top?.mag >= 5 ? `, the strongest a magnitude ${top.mag.toFixed(1)} near ${cleanForSpeech(top.place ?? "")}` : "") + ".");
+        let line = `On the seismic front, we have tracked ${quakePoints.length} earthquakes above magnitude two and a half over the past day`;
+        if (top?.mag >= 5) line += `, the strongest a ${top.mag.toFixed(1)} near ${cleanForSpeech(top.place ?? "")}`;
+        parts.push(line + ".");
       }
     } catch (_) { /* skip */ }
 
     const kpStatus = document.getElementById("kp-status")?.textContent?.trim();
     if (kpStatus && !/unavailable/i.test(kpStatus)) {
-      parts.push(`Item five. Space weather: ${kpStatus.toLowerCase()}.`);
+      const k = kpStatus.toLowerCase();
+      parts.push(k.includes("storm")
+        ? `Space weather needs an eye ${dayPart} — a geomagnetic storm is in progress.`
+        : `Space weather is ${k.includes("quiet") ? "quiet" : k}.`);
     }
 
-    parts.push(`That concludes your debrief. The board is yours. ${salute}`);
+    parts.push("That completes your debrief. The board is yours.");
     return parts.join(" ");
   }
 
   /* ---------- flow ---------- */
   function dismiss() {
+    cancelled = true;
     try { sessionStorage.setItem("gms-landing-seen", "1"); } catch (_) { /* ignore */ }
     try { window.speechSynthesis?.cancel(); } catch (_) { /* ignore */ }
     waveOff();
@@ -216,9 +266,7 @@
     if (speaking) return;
     briefBtn.disabled = true;
     subEl.textContent = "SECURE VOICE CHANNEL · DELIVERING DEBRIEF";
-    // voices load asynchronously in some browsers — nudge once
-    try { window.speechSynthesis?.getVoices(); } catch (_) { /* ignore */ }
-    const script = `${salute} You are connected to the Global Monitoring System. ` + await buildDebrief();
+    const script = await buildDebrief();
     present(script, () => {
       subEl.textContent = "SECURE VOICE CHANNEL · DEBRIEF COMPLETE";
       briefBtn.disabled = false;
