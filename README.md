@@ -16,6 +16,17 @@ entirely on **GitHub Pages** for free.
 - Live earthquakes M2.5+ from USGS
 - Crypto prices with 7-day sparklines (CoinGecko) and FX rates (ECB via Frankfurter)
 - Space weather: NOAA planetary K-index
+- **Live military aircraft** worldwide from public ADS-B (adsb.lol, airplanes.live fallback),
+  polled every 20 s and dead-reckoned between polls, on the globe and the flat map
+- **Satellites** (space stations, the brightest visual satellites, GPS) propagated in the
+  browser with SGP4 from CelesTrak elements, with the ISS ground track drawn on the globe
+  and a **next ISS pass** predictor for your location in the Space panel
+- **Click-to-track**: click any aircraft, satellite or tanker on the globe and the camera
+  locks on, a trail draws behind it and a telemetry card opens (Esc releases)
+- **Sensor styles** for the globe: RGB, CRT, NVG, FLIR (ironbow thermal) and Noir GLSL
+  post-processing, keys `1`–`5` or the buttons on the globe
+- Static infrastructure layers: **submarine cables** and landing points (TeleGeography) and
+  **data centers** (OpenStreetMap)
 - UTC + local clocks, data freshness, and a systems-status readout
 
 **How it stays fresh with no server:** a GitHub Action (`.github/workflows/refresh-data.yml`)
@@ -60,6 +71,26 @@ types 80–89) captured by the refresh Action. It needs a free key from
 
 Without the secret the workflow still succeeds — the tanker layer just stays empty.
 Positions are a snapshot refreshed every 30 minutes, not a continuous live stream.
+
+## Live layers (no keys needed)
+
+- **Military aircraft** come straight from `https://api.adsb.lol/v2/mil` in the visitor's browser
+  (CORS-open, no key), with `https://api.airplanes.live/v2/mil` as a fallback. The feed is only
+  polled while the layer is switched on.
+- **Satellites** read orbital elements from `data/tles.json`, which the refresh Action rebuilds
+  from CelesTrak at most every 6 hours (CelesTrak asks for no more than one fetch per group every
+  2 hours). If the file is missing the browser asks CelesTrak directly and caches the result in
+  `localStorage` for 6 hours. Positions are propagated client-side with
+  [satellite.js](https://github.com/shashwatak/satellite-js) (SGP4). Satellite spike heights are true
+  scale up to about 2,200 km and compressed above that so GPS orbits stay on screen.
+- **ISS pass predictor**: set a location with *USE MY LOCATION* (browser geolocation, never sent
+  anywhere) or type `lat, lng`. It scans the next 48 hours for passes peaking above 10° and flags
+  whether the pass falls in a dark sky (naked-eye visible). Prediction accuracy depends on TLE age.
+- **Submarine cables** (`data/cables.json`) are TeleGeography's public cable geometry, simplified,
+  under **CC BY-NC-SA 3.0** — fine for a personal site, remove the file for any commercial use.
+  **Data centers** (`data/datacenters.json`) are OpenStreetMap-derived centroids under ODbL.
+- Satellites are drawn on the 3D globe only; aircraft, cables and data centers also appear on the
+  flat satellite map.
 
 ## Notes
 

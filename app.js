@@ -7,7 +7,7 @@
 const $ = (id) => document.getElementById(id);
 
 /* ---------- system status readout ---------- */
-const SYS = { news: null, quakes: null, markets: null, crypto: null, fx: null, kp: null };
+const SYS = { news: null, quakes: null, markets: null, crypto: null, fx: null, kp: null, milair: null, sats: null };
 function sysReport(key, ok) {
   SYS[key] = ok;
   const vals = Object.values(SYS);
@@ -232,8 +232,476 @@ async function loadKp() {
   }
 }
 
-/* ---------- overlays: news, quakes, tankers, tension, nuclear, military, choke ---------- */
-const OVL = { news: true, quakes: true, ships: false, tension: false, nuclear: false, military: false, choke: false };
+/* ---------- overlays: news, quakes, tankers, tension, nuclear, military, choke, + live layers ---------- */
+const OVL = { news: true, quakes: true, ships: false, tension: false, nuclear: false, military: false, choke: false,
+              milair: false, sats: false, cables: false, dc: false };
+const OVL_KEYS = Object.keys(OVL);
+
+/* =====================================================================
+   LIVE MILITARY AIRCRAFT — adsb.lol /v2/mil (keyless, CORS-open), with
+   airplanes.live as a fallback source. Polled every 20 s; positions are
+   dead-reckoned between polls from ground speed + track so tracked
+   contacts glide instead of jumping.
+   ===================================================================== */
+const MILAIR_SOURCES = ["https://api.adsb.lol/v2/mil", "https://api.airplanes.live/v2/mil"];
+const MILAIR_POLL_MS = 20000;
+const milAir = { updated: 0, source: null, error: null, byHex: new Map(), points: [] };
+function altColor(ft) {
+  if (ft == null || ft === "ground") return "#ffb347";   // on the ground / no baro alt
+  if (ft < 10000) return "#7fd4ff";
+  if (ft < 30000) return "#4d9fff";
+  return "#e0f4ff";
+}
+function fmtAlt(a) { return a == null ? "—" : a === "ground" ? "GROUND" : `${Math.round(a).toLocaleString()} ft`; }
+function milLabel(p) {
+  const a = p.ac;
+  return `<b>✈ ${esc(a.flight || a.r || a.hex)}</b>` +
+    `${a.t ? ` <span class="lbl-dim">${esc(a.t)}</span>` : ""}` +
+    `<br>${fmtAlt(a.alt)} · ${a.gs != null ? Math.round(a.gs) + " kn" : "—"} · hdg ${a.track != null ? Math.round(a.track) + "°" : "—"}` +
+    `<br><i>${esc(a.desc || "military transponder")} · click to track</i>`;
+}
+async function loadMilAir() {
+  // poll only while the layer is on (the first call at boot just probes the feed)
+  if (milAir.updated && !OVL.milair) return;
+  let json = null, used = null;
+  for (const url of MILAIR_SOURCES) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      json = await res.json(); used = url; break;
+    } catch (e) { milAir.error = e; }
+  }
+  if (!json) { sysReport("milair", false); return; }
+  milAir.updated = Date.now(); milAir.source = used; milAir.error = null;
+  const seen = new Set();
+  for (const a of json.ac ?? []) {
+    if (a.lat == null || a.lon == null) continue;
+    const alt = a.alt_baro ?? a.alt_geom ?? null;
+    const rec = {
+      hex: a.hex, flight: (a.flight || "").trim(), r: a.r || "", t: a.t || "", desc: a.desc || "",
+      lat: a.lat, lng: a.lon, alt, gs: a.gs ?? null, track: a.track ?? null, squawk: a.squawk || "",
+      ownOp: a.ownOp || "", cat: a.category || "", seenAt: Date.now() - (a.seen_pos ?? 0) * 1000,
+    };
+    seen.add(a.hex);
+    let p = milAir.byHex.get(a.hex);
+    if (!p) {
+      p = { lat: rec.lat, lng: rec.lng, size: 0.01, r: 0.32, color: "#4d9fff", ac: rec, label: null,
+            __track: { kind: "air", id: a.hex }, trail: [] };
+      p.label = () => milLabel(p);
+      milAir.byHex.set(a.hex, p);
+    } else {
+      p.ac = rec;
+    }
+    p.lat = rec.lat; p.lng = rec.lng;
+    p.size = alt === "ground" || alt == null ? 0.004 : 0.004 + Math.min(alt, 50000) / 50000 * 0.05;
+    p.color = altColor(alt);
+    if (!p.trail.length || Math.abs(p.trail[p.trail.length - 1][0] - rec.lat) > 0.0005 || Math.abs(p.trail[p.trail.length - 1][1] - rec.lng) > 0.0005) {
+      p.trail.push([rec.lat, rec.lng]);
+      if (p.trail.length > 400) p.trail.shift();
+    }
+  }
+  for (const hex of [...milAir.byHex.keys()]) if (!seen.has(hex)) milAir.byHex.delete(hex);
+  milAir.points = [...milAir.byHex.values()];
+  sysReport("milair", true);
+  if (OVL.milair) {
+    $("view-note").textContent = `${milAir.points.length} military aircraft · ${used.includes("adsb.lol") ? "adsb.lol" : "airplanes.live"} · ${ago(milAir.updated)}`;
+    refreshGlobe();
+    if (satMapInstance && satLayers.milair) renderMilAirInto(satLayers.milair);
+  }
+}
+/* advance aircraft along their track by dt seconds (called from the 2 s tick) */
+function deadReckonMilAir(dtSec) {
+  for (const p of milAir.points) {
+    const a = p.ac;
+    if (a.gs == null || a.track == null || a.gs < 30 || a.alt === "ground") continue;
+    const distDeg = (a.gs * dtSec / 3600) / 60;
+    const rad = (a.track * Math.PI) / 180;
+    p.lat += distDeg * Math.cos(rad);
+    p.lng += (distDeg * Math.sin(rad)) / Math.max(0.2, Math.cos((p.lat * Math.PI) / 180));
+    if (p.lng > 180) p.lng -= 360; else if (p.lng < -180) p.lng += 360;
+  }
+}
+function planeDivIcon(track, color) {
+  return L.divIcon({
+    className: "plane-icon",
+    html: `<svg width="16" height="16" viewBox="0 0 24 24" style="transform:rotate(${Math.round(track ?? 0)}deg)">` +
+      `<path d="M12 2 L14 9 L22 13 L22 15 L14 13 L14 18 L17 20 L17 22 L12 21 L7 22 L7 20 L10 18 L10 13 L2 15 L2 13 L10 9 Z" fill="${color}" stroke="#071a2a" stroke-width="1"/></svg>`,
+    iconSize: [16, 16], iconAnchor: [8, 8],
+  });
+}
+function milPopup(p) {
+  const a = p.ac;
+  return `<b>✈ ${esc(a.flight || a.r || a.hex)}</b>${a.t ? ` · ${esc(a.t)}` : ""}<br>${esc(a.desc || "military transponder")}` +
+    `<br>${fmtAlt(a.alt)} · ${a.gs != null ? Math.round(a.gs) + " kn" : "—"} · hdg ${a.track != null ? Math.round(a.track) + "°" : "—"}` +
+    `${a.squawk ? `<br>squawk ${esc(a.squawk)}` : ""}<br><i>hex ${esc(a.hex)} · ${ago(milAir.updated)}</i>`;
+}
+const PLANE_ICON_ZOOM = 4;
+function renderMilAirInto(group) {
+  group.clearLayers();
+  const map = satMapInstance;
+  if (!map) return;
+  if (map.getZoom() < PLANE_ICON_ZOOM) {
+    for (const p of milAir.points)
+      group.addLayer(L.circleMarker([p.lat, p.lng], { radius: 2.5, color: p.color, weight: 1, fillColor: p.color, fillOpacity: 0.85 }).bindPopup(milPopup(p)));
+  } else {
+    const bounds = map.getBounds().pad(0.25);
+    let n = 0;
+    for (const p of milAir.points) {
+      if (!bounds.contains([p.lat, p.lng])) continue;
+      if (++n > 500) break;
+      if (p.trail.length >= 2) group.addLayer(L.polyline(p.trail, { color: p.color, weight: 1.2, opacity: 0.45 }));
+      group.addLayer(L.marker([p.lat, p.lng], { icon: planeDivIcon(p.ac.track, p.color) }).bindPopup(milPopup(p)));
+    }
+  }
+}
+
+/* =====================================================================
+   SATELLITES — CelesTrak TLEs propagated in the browser with SGP4
+   (satellite.js). TLEs come from data/tles.json (refreshed by the
+   GitHub Action, so CelesTrak sees one fetch per 6 h instead of one per
+   visitor); if that file is missing the browser asks CelesTrak directly.
+   Groups: space stations, the brightest "visual" satellites, GPS.
+   ===================================================================== */
+const TLE_GROUPS = { stations: "#00e5ff", visual: "#9dffb0", "gps-ops": "#d98cff" };
+const TLE_CACHE_KEY = "gm:tles:v1";
+const TLE_TTL_MS = 6 * 3600 * 1000;
+const EARTH_R_KM = 6371;
+const sats = { list: [], points: [], updated: 0, iss: null, issTrack: [], error: null };
+function parseTLE(text, group) {
+  const lines = text.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  const out = [];
+  for (let i = 0; i + 2 < lines.length; i += 3) {
+    const name = lines[i].trim(), l1 = lines[i + 1], l2 = lines[i + 2];
+    if (!l1.startsWith("1 ") || !l2.startsWith("2 ")) { i -= 2; continue; }
+    try {
+      const satrec = satellite.twoline2satrec(l1, l2);
+      out.push({ name, norad: parseInt(l1.slice(2, 7), 10), group, satrec, inc: parseFloat(l2.slice(8, 16)), period: 1440 / parseFloat(l2.slice(52, 63)) });
+    } catch (_) { /* skip malformed */ }
+  }
+  return out;
+}
+async function fetchTLEs() {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(TLE_CACHE_KEY) || "null"); } catch (_) { /* ignore */ }
+  if (cached && Date.now() - cached.at < TLE_TTL_MS) return cached;
+  let data = null;
+  try {
+    const res = await fetch(`data/tles.json?cb=${Math.floor(Date.now() / 3600000)}`);
+    if (res.ok) {
+      const j = await res.json();
+      if (j.groups && Object.keys(j.groups).length) data = { at: Date.parse(j.updated) || Date.now(), groups: j.groups, via: "action" };
+    }
+  } catch (_) { /* fall through */ }
+  if (!data) {
+    const groups = {};
+    for (const g of Object.keys(TLE_GROUPS)) {
+      try {
+        const res = await fetch(`https://celestrak.org/NORAD/elements/gp.php?GROUP=${g}&FORMAT=tle`);
+        if (res.ok) groups[g] = await res.text();
+      } catch (_) { /* group unavailable */ }
+    }
+    if (Object.keys(groups).length) data = { at: Date.now(), groups, via: "celestrak" };
+  }
+  if (!data && cached) return cached;               // stale beats nothing
+  if (data) { try { localStorage.setItem(TLE_CACHE_KEY, JSON.stringify(data)); } catch (_) { /* quota */ } }
+  return data;
+}
+async function loadSats() {
+  if (typeof satellite === "undefined") { sats.error = "satellite.js not loaded"; sysReport("sats", false); return; }
+  const data = await fetchTLEs();
+  if (!data) { sats.error = "no TLE source reachable"; sysReport("sats", false); return; }
+  const list = [];
+  const seen = new Set();
+  for (const [g, text] of Object.entries(data.groups)) {
+    for (const s of parseTLE(text, g)) { if (!seen.has(s.norad)) { seen.add(s.norad); list.push(s); } }
+  }
+  const byNorad = new Map(sats.points.map((p) => [p.sat.norad, p]));
+  sats.list = list;
+  sats.points = list.map((s) => {
+    const p = byNorad.get(s.norad) ?? { lat: 0, lng: 0, size: 0.05, r: 0.22, color: TLE_GROUPS[s.group] ?? "#fff",
+      __track: { kind: "sat", id: s.norad }, trail: [], label: null };
+    p.sat = s; p.altKm = 0; p.velKmS = 0;
+    p.label = () => `<b>🛰 ${esc(s.name)}</b><br>${s.group === "stations" ? "space station" : s.group === "gps-ops" ? "GPS constellation" : "bright satellite"}` +
+      `<br>${Math.round(p.altKm).toLocaleString()} km · ${p.velKmS.toFixed(2)} km/s · inc ${s.inc.toFixed(1)}°<br><i>NORAD ${s.norad} · click to track</i>`;
+    return p;
+  });
+  sats.iss = sats.points.find((p) => /ISS \(ZARYA\)/i.test(p.sat.name)) ?? sats.points.find((p) => /^ISS/i.test(p.sat.name)) ?? null;
+  sats.updated = data.at;
+  propagateSats(new Date());
+  buildIssTrack();
+  updateIssPass();
+  sysReport("sats", true);
+  if (OVL.sats) refreshGlobe();
+}
+function geodetic(satrec, date) {
+  const pv = satellite.propagate(satrec, date);
+  if (!pv.position || typeof pv.position !== "object") return null;
+  const gmst = satellite.gstime(date);
+  const g = satellite.eciToGeodetic(pv.position, gmst);
+  const v = pv.velocity;
+  return { lat: satellite.degreesLat(g.latitude), lng: satellite.degreesLong(g.longitude), alt: g.height,
+           vel: v ? Math.hypot(v.x, v.y, v.z) : 0 };
+}
+function propagateSats(date) {
+  for (const p of sats.points) {
+    const g = geodetic(p.sat.satrec, date);
+    if (!g || !isFinite(g.lat)) continue;
+    p.lat = g.lat; p.lng = g.lng; p.altKm = g.alt; p.velKmS = g.vel;
+    p.size = Math.max(0.02, Math.min(g.alt / EARTH_R_KM, 0.35));   // true scale to ~2,200 km, compressed above (GPS/MEO)
+  }
+}
+/* ISS ground track: 20 min behind to 90 min ahead, one point per minute */
+function buildIssTrack() {
+  sats.issTrack = [];
+  if (!sats.iss) return;
+  const now = Date.now();
+  let seg = [];
+  for (let m = -20; m <= 90; m += 1) {
+    const g = geodetic(sats.iss.sat.satrec, new Date(now + m * 60000));
+    if (!g) continue;
+    if (seg.length && Math.abs(g.lng - seg[seg.length - 1][1]) > 180) { sats.issTrack.push(seg); seg = []; }   // split at antimeridian
+    seg.push([g.lat, g.lng]);
+  }
+  if (seg.length > 1) sats.issTrack.push(seg);
+}
+
+/* ---- ISS pass predictor (observer location from geolocation or typed lat,lng) ---- */
+const OBS_KEY = "gm:observer:v1";
+let observer = null;
+try { observer = JSON.parse(localStorage.getItem(OBS_KEY) || "null"); } catch (_) { /* ignore */ }
+function compass(deg) { return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(((deg % 360) + 360) % 360 / 22.5) % 16]; }
+function findPasses(satrec, obs, hours = 48, minEl = 10) {
+  const obsGd = { latitude: satellite.degreesToRadians(obs.lat), longitude: satellite.degreesToRadians(obs.lng), height: 0.05 };
+  const passes = [];
+  let cur = null;
+  const stepMs = 20000;
+  const end = Date.now() + hours * 3600000;
+  for (let t = Date.now(); t < end; t += stepMs) {
+    const date = new Date(t);
+    const pv = satellite.propagate(satrec, date);
+    if (!pv.position || typeof pv.position !== "object") break;
+    const ecf = satellite.eciToEcf(pv.position, satellite.gstime(date));
+    const la = satellite.ecfToLookAngles(obsGd, ecf);
+    const el = satellite.radiansToDegrees(la.elevation), az = satellite.radiansToDegrees(la.azimuth);
+    if (el > 0) {
+      if (!cur) cur = { start: t, riseAz: az, maxEl: el, maxAt: t, setAz: az };
+      if (el > cur.maxEl) { cur.maxEl = el; cur.maxAt = t; }
+      cur.setAz = az; cur.end = t;
+    } else if (cur) {
+      if (cur.maxEl >= minEl) passes.push(cur);
+      cur = null;
+      if (passes.length >= 5) break;
+    }
+  }
+  return passes;
+}
+/* Is the observer in darkness while the ISS is sunlit? (naive: sun elevation < -6°) */
+function sunElevation(lat, lng, date) {
+  const d = (date - Date.UTC(date.getUTCFullYear(), 0, 0)) / 864e5;
+  const decl = -23.44 * Math.cos((2 * Math.PI / 365) * (d + 10)) * Math.PI / 180;
+  const solarTime = ((date.getUTCHours() + date.getUTCMinutes() / 60) + lng / 15 + 24) % 24;
+  const ha = (solarTime - 12) * 15 * Math.PI / 180;
+  const la = lat * Math.PI / 180;
+  return Math.asin(Math.sin(la) * Math.sin(decl) + Math.cos(la) * Math.cos(decl) * Math.cos(ha)) * 180 / Math.PI;
+}
+function updateIssPass() {
+  const el = $("iss-pass");
+  if (!el) return;
+  if (!sats.iss) { el.innerHTML = `<span class="iss-dim">ISS elements unavailable</span>`; return; }
+  if (!observer) { el.innerHTML = `<span class="iss-dim">set a location to predict the next pass</span>`; return; }
+  const passes = findPasses(sats.iss.sat.satrec, observer);
+  if (!passes.length) { el.innerHTML = `<span class="iss-dim">no pass above 10° in the next 48 h</span>`; return; }
+  const p = passes[0];
+  const visible = sunElevation(observer.lat, observer.lng, new Date(p.maxAt)) < -6;
+  const fmt = (t) => new Date(t).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const inMin = Math.round((p.start - Date.now()) / 60000);
+  el.innerHTML =
+    `<span class="iss-when">${fmt(p.start)}</span><span class="iss-in">in ${inMin < 60 ? inMin + " min" : (inMin / 60).toFixed(1) + " h"}</span>` +
+    `<span class="iss-detail">rises ${compass(p.riseAz)} · peak ${Math.round(p.maxEl)}° · sets ${compass(p.setAz)} · ${Math.round((p.end - p.start) / 60000)} min` +
+    ` · ${visible ? "<b class='iss-vis'>VISIBLE (dark sky)</b>" : "daylight / not naked-eye"}</span>` +
+    `<span class="iss-obs">observer ${observer.lat.toFixed(2)}, ${observer.lng.toFixed(2)}${observer.name ? " · " + esc(observer.name) : ""}</span>`;
+}
+function setObserver(lat, lng, name) {
+  observer = { lat, lng, name: name || "" };
+  try { localStorage.setItem(OBS_KEY, JSON.stringify(observer)); } catch (_) { /* ignore */ }
+  updateIssPass();
+}
+function initIssPassUI() {
+  const geoBtn = $("iss-geo"), form = $("iss-form"), input = $("iss-input");
+  if (geoBtn) geoBtn.addEventListener("click", () => {
+    if (!navigator.geolocation) { $("iss-pass").textContent = "geolocation not available in this browser"; return; }
+    geoBtn.disabled = true;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { geoBtn.disabled = false; setObserver(+pos.coords.latitude.toFixed(3), +pos.coords.longitude.toFixed(3), "my location"); },
+      () => { geoBtn.disabled = false; $("iss-pass").innerHTML = `<span class="iss-dim">location denied — type lat, lng instead</span>`; },
+      { timeout: 10000, maximumAge: 600000 });
+  });
+  if (form) form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const m = String(input.value).match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
+    if (!m) { $("iss-pass").innerHTML = `<span class="iss-dim">enter as "lat, lng" e.g. 32.78, -96.80</span>`; return; }
+    setObserver(parseFloat(m[1]), parseFloat(m[2]), "");
+    input.value = "";
+  });
+  updateIssPass();
+}
+
+/* =====================================================================
+   STATIC INFRASTRUCTURE — submarine cables (TeleGeography, CC BY-NC-SA)
+   and data centers (OpenStreetMap, ODbL). Loaded lazily on first toggle.
+   ===================================================================== */
+const infra = { cables: null, dc: null, cablePaths: [], landingPoints: [], dcPoints: [] };
+async function ensureCables() {
+  if (infra.cables) return infra.cables;
+  const res = await fetch("data/cables.json");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  infra.cables = await res.json();
+  infra.cablePaths = [];
+  for (const c of infra.cables.cables)
+    for (const seg of c.s) infra.cablePaths.push({ pts: seg.map(([lng, lat]) => [lat, lng]), color: c.c, name: c.n, __cable: true });
+  infra.landingPoints = infra.cables.landings.map((l) => ({
+    lat: l.lat, lng: l.lng, size: 0.002, r: 0.12, color: "#5ec8ff",
+    label: `<b>⚓ ${esc(l.n)}</b><br><i>cable landing point</i>`,
+  }));
+  return infra.cables;
+}
+async function ensureDatacenters() {
+  if (infra.dc) return infra.dc;
+  const res = await fetch("data/datacenters.json");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  infra.dc = await res.json();
+  infra.dcPoints = infra.dc.dc.map((d) => ({
+    lat: d.lat, lng: d.lng, size: 0.004, r: 0.14, color: "#ff6ec7",
+    label: `<b>▣ ${esc(d.n)}</b>${d.o ? `<br>${esc(d.o)}` : ""}<br><i>data center · OpenStreetMap</i>`,
+  }));
+  return infra.dc;
+}
+
+/* =====================================================================
+   CLICK-TO-TRACK — click an aircraft, satellite or tanker on the globe:
+   the camera locks on, a trail draws behind it and a telemetry card opens.
+   Esc, the card's × or clicking empty globe releases the lock.
+   ===================================================================== */
+const track = { target: null, kind: null, alt: null };
+function trackedPoint() {
+  if (!track.target) return null;
+  if (track.kind === "air") return milAir.byHex.get(track.target.__track.id) ?? null;
+  if (track.kind === "sat") return sats.points.find((p) => p.sat.norad === track.target.__track.id) ?? null;
+  if (track.kind === "ship") return (shipData.ships ?? []).find((s) => s.mmsi === track.target.__track.id) ?? null;
+  return null;
+}
+function startTrack(point) {
+  if (!point?.__track || !globeInstance) return;
+  track.target = point; track.kind = point.__track.kind;
+  globeInstance.controls().autoRotate = false;
+  const pov = globeInstance.pointOfView();
+  track.alt = Math.min(pov.altitude, track.kind === "sat" ? 1.6 : 0.6);
+  globeInstance.pointOfView({ lat: point.lat, lng: point.lng, altitude: track.alt }, 900);
+  $("track-card").hidden = false;
+  document.body.classList.add("tracking");
+  renderTrackCard();
+  refreshGlobe();
+}
+function stopTrack() {
+  if (!track.target) return;
+  track.target = null; track.kind = null;
+  $("track-card").hidden = true;
+  document.body.classList.remove("tracking");
+  if (globeInstance) globeInstance.controls().autoRotate = true;
+  refreshGlobe();
+}
+function followTrack() {
+  const p = trackedPoint();
+  if (!p || !globeInstance) { if (track.target) { $("track-status").textContent = "CONTACT LOST"; } return; }
+  const pov = globeInstance.pointOfView();
+  track.alt = pov.altitude;   // user may zoom while locked; keep their altitude
+  globeInstance.pointOfView({ lat: p.lat, lng: p.lng, altitude: pov.altitude }, 0);
+  renderTrackCard();
+}
+function row(k, v) { return `<div class="tk-row"><span>${k}</span><b>${v}</b></div>`; }
+function renderTrackCard() {
+  const card = $("track-card");
+  if (!card || !track.target) return;
+  const p = trackedPoint();
+  const k = track.kind;
+  let title = "", sub = "", rows = "";
+  if (k === "air") {
+    const a = p?.ac ?? track.target.ac;
+    title = a.flight || a.r || a.hex; sub = `${a.t || "MIL"} · ${a.desc || "military transponder"}`;
+    rows = row("ALT", fmtAlt(a.alt)) + row("GS", a.gs != null ? `${Math.round(a.gs)} kn` : "—") +
+      row("HDG", a.track != null ? `${Math.round(a.track)}° ${compass(a.track)}` : "—") +
+      row("REG", a.r || "—") + row("HEX", a.hex) + row("SQK", a.squawk || "—") +
+      (a.ownOp ? row("OPR", esc(a.ownOp)) : "") +
+      row("POS", p ? `${p.lat.toFixed(3)}, ${p.lng.toFixed(3)}` : "—") +
+      row("FIX", ago(a.seenAt) || "now");
+  } else if (k === "sat") {
+    const s = p?.sat ?? track.target.sat;
+    title = s.name; sub = s.group === "stations" ? "SPACE STATION" : s.group === "gps-ops" ? "GPS CONSTELLATION" : "BRIGHT SATELLITE";
+    rows = row("ALT", p ? `${Math.round(p.altKm).toLocaleString()} km` : "—") + row("VEL", p ? `${p.velKmS.toFixed(2)} km/s` : "—") +
+      row("INC", `${s.inc.toFixed(2)}°`) + row("PERIOD", `${s.period.toFixed(1)} min`) + row("NORAD", s.norad) +
+      row("SUBPT", p ? `${p.lat.toFixed(2)}, ${p.lng.toFixed(2)}` : "—") + row("TLE", ago(sats.updated) || "—");
+  } else if (k === "ship") {
+    const s = p ?? track.target.ship;
+    title = s.name || `MMSI ${s.mmsi}`; sub = shipTypeName(s.t).toUpperCase();
+    rows = row("SOG", s.sog != null ? `${s.sog.toFixed(1)} kn` : "—") + row("COG", s.cog != null ? `${Math.round(s.cog)}° ${compass(s.cog)}` : "—") +
+      row("MMSI", s.mmsi) + row("POS", `${s.lat.toFixed(3)}, ${s.lng.toFixed(3)}`) + row("SNAP", shipData.updated ? ago(Date.parse(shipData.updated)) : "—");
+  }
+  card.querySelector(".tk-title").textContent = title;
+  card.querySelector(".tk-sub").textContent = sub;
+  card.querySelector(".tk-rows").innerHTML = rows;
+  $("track-status").textContent = p ? "TRACKING · LOCKED" : "CONTACT LOST";
+}
+function trackTrailPaths() {
+  const p = trackedPoint();
+  if (!p) return [];
+  let pts = null, color = "#00e5ff";
+  if (track.kind === "air") { pts = p.trail; color = "#ffd166"; }
+  else if (track.kind === "sat") { pts = p.trail; color = p.color; }
+  else if (track.kind === "ship") { pts = shipTrail(p); color = "#ff9e3d"; }
+  if (!pts || pts.length < 2) return [];
+  // split at the antimeridian so the trail never spans the globe
+  const segs = []; let seg = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    if (Math.abs(pts[i][1] - pts[i - 1][1]) > 180) { segs.push(seg); seg = []; }
+    seg.push(pts[i]);
+  }
+  segs.push(seg);
+  return segs.filter((s) => s.length > 1).map((s) => ({ pts: s, color, __trail: true }));
+}
+function initTracking() {
+  $("track-close")?.addEventListener("click", stopTrack);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") stopTrack();
+    const t = e.target;
+    if (t && (/TEXTAREA|SELECT/.test(t.tagName) || (t.tagName === "INPUT" && !/checkbox|radio|button/.test(t.type)))) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (/^[1-5]$/.test(e.key) && typeof Sensors !== "undefined") Sensors.set(Sensors.NAMES[+e.key - 1]);
+  });
+}
+
+/* one 2 s tick drives satellite propagation, aircraft dead reckoning and the camera lock */
+const TICK_MS = 2000;
+let lastTick = Date.now();
+let issTrackBuiltAt = 0;
+function liveTick() {
+  const now = Date.now();
+  const dt = (now - lastTick) / 1000;
+  lastTick = now;
+  if (document.hidden) return;
+  let dirty = false;
+  if (OVL.sats && sats.points.length) {
+    propagateSats(new Date(now));
+    if (now - issTrackBuiltAt > 60000) { buildIssTrack(); issTrackBuiltAt = now; }
+    if (track.kind === "sat") { const p = trackedPoint(); if (p) { p.trail.push([p.lat, p.lng]); if (p.trail.length > 240) p.trail.shift(); } }
+    dirty = true;
+  }
+  if (OVL.milair && milAir.points.length) {
+    deadReckonMilAir(dt); dirty = true;
+    if (track.kind === "air") { const p = trackedPoint(); if (p?.ac.gs > 30) { p.trail.push([p.lat, p.lng]); if (p.trail.length > 400) p.trail.shift(); } }
+  }
+  if (dirty && globeInstance && !$("globe").hidden) refreshGlobe();
+  if (track.target) followTrack();
+}
 let tensionPlaces = [];
 async function loadTension() {
   try {
@@ -387,7 +855,7 @@ function operatorFlag(c) {
 function overlayDefs() {
   const defs = [];
   if (OVL.ships) defs.push(...(shipData.ships ?? []).slice(0, 2000).map((s) => ({
-    lat: s.lat, lng: s.lng, color: "#ff9e3d", r: 0.28, size: 0.02,
+    lat: s.lat, lng: s.lng, color: "#ff9e3d", r: 0.28, size: 0.02, __track: { kind: "ship", id: s.mmsi }, ship: s,
     label: `<b>⛴ ${esc(s.name)}</b><br>${shipTypeName(s.t)}` +
            `<br><i>${s.sog != null ? s.sog.toFixed(1) + " kn · " : ""}snapshot ${shipData.updated ? ago(Date.parse(shipData.updated)) : ""}</i>`,
   })));
@@ -419,6 +887,10 @@ function globePoints() {
       label: `<b>M${q.mag?.toFixed(1)}</b> ${esc(q.place ?? "")}<br><i>${ago(q.time)}</i>`,
     })) : []),
     ...overlayDefs(),
+    ...(OVL.milair ? milAir.points : []),
+    ...(OVL.sats ? sats.points : []),
+    ...(OVL.cables ? infra.landingPoints : []),
+    ...(OVL.dc ? infra.dcPoints : []),
   ];
 }
 function shipPaths() {
@@ -435,7 +907,12 @@ function refreshGlobe() {
   if (!globeInstance) return;
   globeInstance.pointsData(globePoints());
   globeInstance.polygonsData(OVL.tension ? tensionFeatures() : []);
-  globeInstance.pathsData(shipPaths());
+  globeInstance.pathsData([
+    ...shipPaths(),
+    ...(OVL.cables ? infra.cablePaths : []),
+    ...(OVL.sats ? sats.issTrack.map((pts) => ({ pts, color: "rgba(0,229,255,0.55)", __iss: true })) : []),
+    ...trackTrailPaths(),
+  ]);
 }
 function initGlobe() {
   const el = $("globe");
@@ -443,7 +920,7 @@ function initGlobe() {
     el.innerHTML = `<div class="globe-fallback">3D globe library could not be loaded.<br>Check your connection and reload.</div>`;
     return;
   }
-  const globe = Globe()(el)
+  const globe = Globe({ rendererConfig: { preserveDrawingBuffer: true, antialias: true } })(el)
     .globeImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-night.jpg")
     .bumpImageUrl("https://unpkg.com/three-globe@2.31.1/example/img/earth-topology.png")
     .backgroundColor("#020a12")
@@ -461,10 +938,14 @@ function initGlobe() {
     .polygonStrokeColor(() => "#0b2a38")
     .pathsData([])
     .pathPoints("pts")
-    .pathPointAlt(0.002)
-    .pathColor(() => "rgba(255, 158, 61, 0.5)")
-    .pathStroke(1.5)
+    .pathPointAlt((d) => d.__iss ? 0.065 : d.__trail && track.kind === "sat" ? 0.06 : d.__trail && track.kind === "air" ? 0.012 : 0.002)
+    .pathColor((d) => d.__trail ? d.color : d.__cable ? d.color : d.__iss ? d.color : "rgba(255, 158, 61, 0.5)")
+    .pathStroke((d) => d.__trail ? 2.2 : d.__cable ? 0.9 : d.__iss ? 1.6 : 1.5)
+    .pathLabel((d) => d.__cable ? `<b>⌇ ${esc(d.name)}</b><br><i>submarine cable · TeleGeography</i>` : d.__iss ? "<b>ISS ground track</b><br><i>−20 min → +90 min</i>" : "")
     .pathTransitionDuration(0)
+    .pointsTransitionDuration(0)
+    .onPointClick((d) => { if (d?.__track) startTrack(d); })
+    .onGlobeClick(() => stopTrack())
     .polygonLabel((d) =>
       `<b>${esc(d.__t.name)}</b><br>Conflict level: ${d.__t.tier} (${(d.__t.score * 100).toFixed(0)}/100)` +
       `<br><i>${d.__t.count} conflict-related headline${d.__t.count === 1 ? "" : "s"}, trailing 30 days</i>`)
@@ -477,6 +958,17 @@ function initGlobe() {
     if (!el.hidden) globe.width(el.clientWidth).height(el.clientHeight);
   });
   globeInstance = globe;
+  // sensor post-processing reads the globe's canvas each frame
+  const fx = $("sensor-fx");
+  if (fx && typeof Sensors !== "undefined") {
+    const ok = Sensors.init(fx, () => el.querySelector("canvas"));
+    if (ok) { Sensors.restore(); initSensorBar(); }
+    else document.querySelector(".sensor-bar")?.setAttribute("hidden", "");
+  }
+}
+function initSensorBar() {
+  document.querySelectorAll(".sensor-bar [data-sensor]").forEach((b) =>
+    b.addEventListener("click", () => Sensors.set(b.dataset.sensor)));
 }
 
 /* ---------- flat satellite map (Leaflet + Esri imagery + RainViewer live layers) ----------
@@ -577,12 +1069,14 @@ function initSatMap() {
     }).bindPopup(`<b>⬖ ${esc(s.n)}</b><br>${esc(s.note)}`)
   ));
 
-  // re-render ships at the right detail level as the user pans/zooms
+  // re-render ships / aircraft at the right detail level as the user pans/zooms
   let shipRedraw = null;
   map.on("zoomend moveend", () => {
-    if (!OVL.ships || !satLayers.ships) return;
     clearTimeout(shipRedraw);
-    shipRedraw = setTimeout(() => renderShipsInto(satLayers.ships), 150);
+    shipRedraw = setTimeout(() => {
+      if (OVL.ships && satLayers.ships) renderShipsInto(satLayers.ships);
+      if (OVL.milair && satLayers.milair) renderMilAirInto(satLayers.milair);
+    }, 150);
   });
 
   satMapInstance = map;
@@ -671,11 +1165,33 @@ function buildMapShips() {
   renderShipsInto(group);
   return group;
 }
+function buildMapCables() {
+  const group = L.layerGroup();
+  for (const p of infra.cablePaths)
+    group.addLayer(L.polyline(p.pts, { color: p.color, weight: 1.2, opacity: 0.7 }).bindPopup(`<b>⌇ ${esc(p.name)}</b><br><i>submarine cable · © TeleGeography</i>`));
+  for (const l of infra.landingPoints)
+    group.addLayer(L.circleMarker([l.lat, l.lng], { radius: 2.5, color: "#5ec8ff", weight: 1, fillColor: "#5ec8ff", fillOpacity: 0.8 }).bindPopup(l.label));
+  return group;
+}
+function buildMapDatacenters() {
+  const group = L.layerGroup();
+  for (const d of infra.dcPoints)
+    group.addLayer(L.circleMarker([d.lat, d.lng], { radius: 3, color: "#ff6ec7", weight: 1, fillColor: "#ff6ec7", fillOpacity: 0.6 }).bindPopup(d.label));
+  return group;
+}
+function buildMapMilAir() {
+  const group = L.layerGroup();
+  renderMilAirInto(group);
+  return group;
+}
 function applyMapOverlays() {
   if (!satMapInstance) return;
   if (OVL.tension && !satLayers.tension && countriesFeatures) satLayers.tension = buildMapTension();
   if (OVL.ships && !satLayers.ships && shipData.ships?.length) satLayers.ships = buildMapShips();
-  for (const key of ["news", "quakes", "ships", "tension", "nuclear", "military", "choke"]) {
+  if (OVL.milair && !satLayers.milair && milAir.points.length) satLayers.milair = buildMapMilAir();
+  if (OVL.cables && !satLayers.cables && infra.cablePaths.length) satLayers.cables = buildMapCables();
+  if (OVL.dc && !satLayers.dc && infra.dcPoints.length) satLayers.dc = buildMapDatacenters();
+  for (const key of OVL_KEYS) {
     const layer = satLayers[key];
     if (!layer) continue;
     if (OVL[key]) layer.addTo(satMapInstance);
@@ -685,11 +1201,33 @@ function applyMapOverlays() {
 
 /* ---------- overlay toggle wiring ---------- */
 function initOverlayToggles() {
-  for (const key of ["news", "quakes", "ships", "tension", "nuclear", "military", "choke"]) {
+  for (const key of OVL_KEYS) {
     const box = $(`tog-${key}`);
     if (!box) continue;
     box.addEventListener("change", async () => {
       OVL[key] = box.checked;
+      if (key === "milair" && box.checked) {
+        if (!milAir.points.length || Date.now() - milAir.updated > MILAIR_POLL_MS * 2) await loadMilAir();
+        $("view-note").textContent = milAir.points.length
+          ? `${milAir.points.length} military aircraft · live ADS-B · ${ago(milAir.updated)}`
+          : "military aircraft feed unavailable right now";
+      }
+      if (key === "sats" && box.checked) {
+        if (!sats.points.length) await loadSats();
+        $("view-note").textContent = sats.points.length
+          ? `${sats.points.length} satellites · SGP4 · TLEs ${ago(sats.updated)}`
+          : `satellites unavailable · ${sats.error ?? ""}`;
+        satLayers.sats = null; // globe only; flat map shows no satellites
+      }
+      if (key === "cables" && box.checked) {
+        try { await ensureCables(); $("view-note").textContent = `${infra.cables.cables.length} submarine cables · ${infra.landingPoints.length} landings · © TeleGeography`; }
+        catch (e) { console.error(e); $("view-note").textContent = "cable data failed to load"; }
+      }
+      if (key === "dc" && box.checked) {
+        try { await ensureDatacenters(); $("view-note").textContent = `${infra.dcPoints.length} data centers · OpenStreetMap`; }
+        catch (e) { console.error(e); $("view-note").textContent = "data center data failed to load"; }
+      }
+      if (!box.checked && track.kind && ((key === "milair" && track.kind === "air") || (key === "sats" && track.kind === "sat") || (key === "ships" && track.kind === "ship"))) stopTrack();
       if (key === "tension") {
         $("tension-scale").hidden = !box.checked;
         if (box.checked) await ensureCountries();
@@ -740,6 +1278,14 @@ function initViewSwitcher() {
   initViewSwitcher();
   initTabs();
   initOverlayToggles();
+  initTracking();
+  initIssPassUI();
+  loadMilAir();
+  loadSats();
+  setInterval(loadMilAir, MILAIR_POLL_MS);
+  setInterval(loadSats, TLE_TTL_MS);
+  setInterval(updateIssPass, 10 * 60 * 1000);
+  setInterval(liveTick, TICK_MS);
   loadMarkets();
   loadCrypto();
   loadFX();
@@ -750,7 +1296,7 @@ function initViewSwitcher() {
   setInterval(loadMarkets, 10 * 60 * 1000);
   setInterval(async () => {
     await Promise.allSettled([loadTension(), loadShips()]);
-    for (const key of ["tension", "ships"]) {   // rebuild these from fresh data
+    for (const key of ["tension", "ships", "milair"]) {   // rebuild these from fresh data
       if (satLayers[key] && satMapInstance) satMapInstance.removeLayer(satLayers[key]);
       satLayers[key] = null;
     }

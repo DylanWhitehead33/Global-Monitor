@@ -2,8 +2,8 @@ name: Refresh news data
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
-  workflow_dispatch: {}
+    - cron: "*/30 * * * *"   # every 30 minutes (UTC)
+  workflow_dispatch: {}       # allows manual "Run workflow" button
 
 permissions:
   contents: write
@@ -35,12 +35,6 @@ jobs:
         env:
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
         run: node scripts/fetch-shipping.mjs
-
-      - name: Generate voice debrief (ElevenLabs)
-        env:
-          ELEVENLABS_KEY: ${{ secrets.ELEVENLABS_KEY }}
-          VOICE_MIN_HOURS: "36"
-        run: node scripts/fetch-voice.mjs
 
       - name: Commit updated data
         run: |

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Global Monitoring System</title>
-<meta name="description" content="Personal global monitoring system: live news, geopolitics, satellite map, markets, earthquakes, space weather.">
+<meta name="description" content="Personal global monitoring system: live news, geopolitics, military aircraft, satellites, satellite map, markets, earthquakes, space weather.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -60,8 +60,28 @@
       </label>
       <span class="panel-note" id="view-note">news events · earthquakes M2.5+ (24h)</span>
     </div>
-    <div id="globe"></div>
-    <div id="satmap" hidden></div>
+    <div class="view-stage">
+      <div id="globe"></div>
+      <div id="satmap" hidden></div>
+      <canvas id="sensor-fx" hidden aria-hidden="true"></canvas>
+      <div id="track-card" class="track-card" hidden>
+        <div class="tk-head">
+          <span id="track-status" class="tk-status">TRACKING · LOCKED</span>
+          <button id="track-close" class="tk-close" aria-label="Stop tracking (Esc)">✕</button>
+        </div>
+        <div class="tk-title"></div>
+        <div class="tk-sub"></div>
+        <div class="tk-rows"></div>
+        <div class="tk-hint">Esc or click empty globe to release</div>
+      </div>
+      <div class="sensor-bar" role="group" aria-label="Sensor style">
+        <button data-sensor="rgb" class="active" title="1">RGB</button>
+        <button data-sensor="crt" title="2">CRT</button>
+        <button data-sensor="nvg" title="3">NVG</button>
+        <button data-sensor="flir" title="4">FLIR</button>
+        <button data-sensor="noir" title="5">NOIR</button>
+      </div>
+    </div>
     <div class="legend" id="view-legend">
       <label class="tog"><input type="checkbox" id="tog-news" checked> <i class="dot dot-event"></i>NEWS</label>
       <label class="tog"><input type="checkbox" id="tog-quakes" checked> <i class="dot dot-quake"></i>QUAKES</label>
@@ -70,10 +90,14 @@
       <label class="tog"><input type="checkbox" id="tog-nuclear"> <i class="dot" style="background:#ff4d6d"></i>NUCLEAR SITES</label>
       <label class="tog"><input type="checkbox" id="tog-military"> <i class="dot" style="background:#4d9fff"></i>MILITARY BASES</label>
       <label class="tog"><input type="checkbox" id="tog-choke"> <i class="dot" style="background:#d98cff"></i>TRADE CHOKE POINTS</label>
+      <label class="tog"><input type="checkbox" id="tog-milair"> <i class="dot" style="background:#4d9fff;box-shadow:0 0 6px #4d9fff"></i>MILITARY AIRCRAFT</label>
+      <label class="tog"><input type="checkbox" id="tog-sats"> <i class="dot" style="background:#9dffb0"></i>SATELLITES</label>
+      <label class="tog"><input type="checkbox" id="tog-cables"> <i class="dot" style="background:#5ec8ff"></i>SUBMARINE CABLES</label>
+      <label class="tog"><input type="checkbox" id="tog-dc"> <i class="dot" style="background:#ff6ec7"></i>DATA CENTERS</label>
       <span class="tension-scale" id="tension-scale" hidden>
         low <i class="scale-bar" aria-hidden="true"></i> war
       </span>
-      <span class="hint" id="view-hint">drag to rotate · scroll to zoom · hover for detail</span>
+      <span class="hint" id="view-hint">drag to rotate · scroll to zoom · click aircraft / satellite / tanker to track · 1–5 sensor</span>
     </div>
   </section>
 
@@ -129,7 +153,7 @@
   </section>
 
   <section class="panel" id="panel-space">
-    <div class="panel-head"><h2>SPACE WEATHER</h2><span class="panel-note">NOAA SWPC</span></div>
+    <div class="panel-head"><h2>SPACE</h2><span class="panel-note">NOAA SWPC · CelesTrak</span></div>
     <div class="space-row">
       <div id="kp-tile" class="kp-tile">
         <div class="kp-value" id="kp-value">—</div>
@@ -137,19 +161,28 @@
       </div>
       <p class="smallprint">Kp 0–3 quiet · 4 active · 5+ geomagnetic storm (aurora likely at high latitudes)</p>
     </div>
+    <div class="iss-tile">
+      <div class="iss-head"><span class="iss-label">🛰 NEXT ISS PASS</span>
+        <form id="iss-form" class="iss-form"><input id="iss-input" type="text" placeholder="lat, lng" aria-label="Observer latitude, longitude" size="12"><button type="submit">SET</button></form>
+        <button id="iss-geo" class="iss-btn" type="button">USE MY LOCATION</button>
+      </div>
+      <div id="iss-pass" class="iss-pass"><span class="iss-dim">loading orbital elements…</span></div>
+    </div>
   </section>
 </main>
 
 <footer>
   <span>Static dashboard · news refreshed every 30 min by GitHub Actions · map layers, quakes and markets fetched live in your browser</span>
-  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · Yahoo Finance · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer</span>
+  <span>Sources: BBC · Al Jazeera · Guardian · DW · France 24 · Defense One · War on the Rocks · Breaking Defense · Foreign Policy · Ars Technica · The Verge · MIT Tech Review · CNBC · MarketWatch · Yahoo Finance · USGS · CoinGecko · Frankfurter · NOAA · Esri · RainViewer · adsb.lol / airplanes.live (military ADS-B) · CelesTrak (orbital elements) · OpenStreetMap contributors, ODbL (data centers) · © TeleGeography, submarinecablemap.com, CC BY-NC-SA 3.0 (submarine cables)</span>
   <span>Tension heatmap: keyword-weighted analysis of the last 30 days of geopolitics/world headlines, relative scale. Base &amp; choke-point markers: curated from publicly reported sources, locations approximate. Personal project — not affiliated with Bloomberg or any data provider.</span>
 </footer>
 
 <script src="https://unpkg.com/globe.gl@2.34.5/dist/globe.gl.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
 <script src="overlays.js"></script>
+<script src="sensors.js"></script>
 <script src="app.js"></script>
 <script src="landing.js"></script>
 </body>
