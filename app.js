@@ -274,8 +274,9 @@ async function loadMilAir() {
   if (!json) {
     // last resort: the 30-minute snapshot the refresh Action commits to data/milair.json
     try {
-      const res = await fetch(`data/milair.json?cb=${Math.floor(Date.now() / 600000)}`);
-      if (res.ok) { const snap = await res.json(); if (snap.ac?.length) { json = snap; used = "snapshot"; milAir.snapshotAt = Date.parse(snap.updated) || Date.now(); } }
+      const cb = Math.floor(Date.now() / 600000);
+      const snap = await fetchFirstJson([`data/milair.json?cb=${cb}`, `milair.json?cb=${cb}`]);
+      if (snap.ac?.length) { json = snap; used = "snapshot"; milAir.snapshotAt = Date.parse(snap.updated) || Date.now(); }
     } catch (_) { /* no snapshot either */ }
   }
   if (!json) { sysReport("milair", false); return; }
@@ -397,11 +398,9 @@ async function fetchTLEs() {
   if (cached && Date.now() - cached.at < TLE_TTL_MS) return cached;
   let data = null;
   try {
-    const res = await fetch(`data/tles.json?cb=${Math.floor(Date.now() / 3600000)}`);
-    if (res.ok) {
-      const j = await res.json();
-      if (j.groups && Object.keys(j.groups).length) data = { at: Date.parse(j.updated) || Date.now(), groups: j.groups, via: "action" };
-    }
+    const cb = Math.floor(Date.now() / 3600000);
+    const j = await fetchFirstJson([`data/tles.json?cb=${cb}`, `tles.json?cb=${cb}`]);
+    if (j.groups && Object.keys(j.groups).length) data = { at: Date.parse(j.updated) || Date.now(), groups: j.groups, via: "action" };
   } catch (_) { /* fall through */ }
   if (!data) {
     const groups = {};
@@ -562,11 +561,22 @@ function initIssPassUI() {
    and data centers (OpenStreetMap, ODbL). Loaded lazily on first toggle.
    ===================================================================== */
 const infra = { cables: null, dc: null, cablePaths: [], landingPoints: [], dcPoints: [] };
+/* Try each path in turn (GitHub's web uploader sometimes drops files at the repo
+   root instead of inside data/, so accept both). Resolves with parsed JSON. */
+async function fetchFirstJson(paths) {
+  let lastErr = null;
+  for (const p of paths) {
+    try {
+      const res = await fetch(p);
+      if (!res.ok) { lastErr = new Error(`${p}: HTTP ${res.status}`); continue; }
+      return await res.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr ?? new Error("no path worked");
+}
 async function ensureCables() {
   if (infra.cables) return infra.cables;
-  const res = await fetch("data/cables.json");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  infra.cables = await res.json();
+  infra.cables = await fetchFirstJson(["data/cables.json", "cables.json"]);
   infra.cablePaths = [];
   for (const c of infra.cables.cables)
     for (const seg of c.s) infra.cablePaths.push({ pts: seg.map(([lng, lat]) => [lat, lng]), color: c.c, name: c.n, __cable: true });
@@ -578,9 +588,7 @@ async function ensureCables() {
 }
 async function ensureDatacenters() {
   if (infra.dc) return infra.dc;
-  const res = await fetch("data/datacenters.json");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  infra.dc = await res.json();
+  infra.dc = await fetchFirstJson(["data/datacenters.json", "datacenters.json"]);
   infra.dcPoints = infra.dc.dc.map((d) => ({
     lat: d.lat, lng: d.lng, size: 0.004, r: 0.14, color: "#ff6ec7",
     label: `<b>▣ ${esc(d.n)}</b>${d.o ? `<br>${esc(d.o)}` : ""}<br><i>data center · OpenStreetMap</i>`,
@@ -1232,11 +1240,11 @@ function initOverlayToggles() {
       }
       if (key === "cables" && box.checked) {
         try { await ensureCables(); $("view-note").textContent = `${infra.cables.cables.length} submarine cables · ${infra.landingPoints.length} landings · © TeleGeography`; }
-        catch (e) { console.error(e); $("view-note").textContent = `cable data failed to load (data/cables.json ${e.message}) — is the file inside the data/ folder?`; }
+        catch (e) { console.error(e); $("view-note").textContent = `cable data failed to load (${e.message})`; }
       }
       if (key === "dc" && box.checked) {
         try { await ensureDatacenters(); $("view-note").textContent = `${infra.dcPoints.length} data centers · OpenStreetMap`; }
-        catch (e) { console.error(e); $("view-note").textContent = `data center data failed to load (data/datacenters.json ${e.message}) — is the file inside the data/ folder?`; }
+        catch (e) { console.error(e); $("view-note").textContent = `data center data failed to load (${e.message})`; }
       }
       if (!box.checked && track.kind && ((key === "milair" && track.kind === "air") || (key === "sats" && track.kind === "sat") || (key === "ships" && track.kind === "ship"))) stopTrack();
       if (key === "tension") {
