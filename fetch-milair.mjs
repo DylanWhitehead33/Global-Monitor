@@ -2,11 +2,13 @@
 // fallback), written to data/milair.json by the refresh Action. The browser uses
 // the live API directly and only falls back to this file if both live sources are
 // unreachable (blocked network, CORS change, outage). No key needed. Node 22+.
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+// works from scripts/ or from the repo root (GitHub's uploader sometimes flattens folders)
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = existsSync(join(HERE, "index.html")) ? HERE : join(HERE, "..");
 const OUT = join(ROOT, "data", "milair.json");
 mkdirSync(join(ROOT, "data"), { recursive: true });
 
