@@ -271,8 +271,15 @@ async function loadMilAir() {
       json = await res.json(); used = url; break;
     } catch (e) { milAir.error = e; }
   }
+  if (!json) {
+    // last resort: the 30-minute snapshot the refresh Action commits to data/milair.json
+    try {
+      const res = await fetch(`data/milair.json?cb=${Math.floor(Date.now() / 600000)}`);
+      if (res.ok) { const snap = await res.json(); if (snap.ac?.length) { json = snap; used = "snapshot"; milAir.snapshotAt = Date.parse(snap.updated) || Date.now(); } }
+    } catch (_) { /* no snapshot either */ }
+  }
   if (!json) { sysReport("milair", false); return; }
-  milAir.updated = Date.now(); milAir.source = used; milAir.error = null;
+  milAir.updated = used === "snapshot" ? milAir.snapshotAt : Date.now(); milAir.source = used; milAir.error = null;
   const seen = new Set();
   for (const a of json.ac ?? []) {
     if (a.lat == null || a.lon == null) continue;
@@ -304,10 +311,14 @@ async function loadMilAir() {
   milAir.points = [...milAir.byHex.values()];
   sysReport("milair", true);
   if (OVL.milair) {
-    $("view-note").textContent = `${milAir.points.length} military aircraft · ${used.includes("adsb.lol") ? "adsb.lol" : "airplanes.live"} · ${ago(milAir.updated)}`;
+    $("view-note").textContent = `${milAir.points.length} military aircraft · ${milSourceName()} · ${ago(milAir.updated) || "now"}`;
     refreshGlobe();
     if (satMapInstance && satLayers.milair) renderMilAirInto(satLayers.milair);
   }
+}
+function milSourceName() {
+  const u = milAir.source || "";
+  return u === "snapshot" ? "30-min snapshot (live feeds blocked)" : u.includes("adsb.lol") ? "adsb.lol live" : u ? "airplanes.live" : "—";
 }
 /* advance aircraft along their track by dt seconds (called from the 2 s tick) */
 function deadReckonMilAir(dtSec) {
@@ -1209,8 +1220,8 @@ function initOverlayToggles() {
       if (key === "milair" && box.checked) {
         if (!milAir.points.length || Date.now() - milAir.updated > MILAIR_POLL_MS * 2) await loadMilAir();
         $("view-note").textContent = milAir.points.length
-          ? `${milAir.points.length} military aircraft · live ADS-B · ${ago(milAir.updated)}`
-          : "military aircraft feed unavailable right now";
+          ? `${milAir.points.length} military aircraft · ${milSourceName()} · ${ago(milAir.updated) || "now"}`
+          : `military aircraft feed unavailable · ${milAir.error ? String(milAir.error.message || milAir.error).slice(0, 60) : "no source reachable"}`;
       }
       if (key === "sats" && box.checked) {
         if (!sats.points.length) await loadSats();
@@ -1221,11 +1232,11 @@ function initOverlayToggles() {
       }
       if (key === "cables" && box.checked) {
         try { await ensureCables(); $("view-note").textContent = `${infra.cables.cables.length} submarine cables · ${infra.landingPoints.length} landings · © TeleGeography`; }
-        catch (e) { console.error(e); $("view-note").textContent = "cable data failed to load"; }
+        catch (e) { console.error(e); $("view-note").textContent = `cable data failed to load (data/cables.json ${e.message}) — is the file inside the data/ folder?`; }
       }
       if (key === "dc" && box.checked) {
         try { await ensureDatacenters(); $("view-note").textContent = `${infra.dcPoints.length} data centers · OpenStreetMap`; }
-        catch (e) { console.error(e); $("view-note").textContent = "data center data failed to load"; }
+        catch (e) { console.error(e); $("view-note").textContent = `data center data failed to load (data/datacenters.json ${e.message}) — is the file inside the data/ folder?`; }
       }
       if (!box.checked && track.kind && ((key === "milair" && track.kind === "air") || (key === "sats" && track.kind === "sat") || (key === "ships" && track.kind === "ship"))) stopTrack();
       if (key === "tension") {

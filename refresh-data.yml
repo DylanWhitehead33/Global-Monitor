@@ -31,6 +31,9 @@ jobs:
       - name: Fetch orbital elements (CelesTrak, at most every 6 h)
         run: node scripts/fetch-tles.mjs
 
+      - name: Snapshot military aircraft (ADS-B fallback)
+        run: node scripts/fetch-milair.mjs
+
       - name: Fetch tanker positions (AIS)
         env:
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
