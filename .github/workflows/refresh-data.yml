@@ -28,6 +28,12 @@ jobs:
       - name: Fetch market indexes
         run: node scripts/fetch-markets.mjs
 
+      - name: Fetch orbital elements (CelesTrak, at most every 6 h)
+        run: node "$( [ -f scripts/fetch-tles.mjs ] && echo scripts/fetch-tles.mjs || echo fetch-tles.mjs )"
+
+      - name: Snapshot military aircraft (ADS-B fallback)
+        run: node "$( [ -f scripts/fetch-milair.mjs ] && echo scripts/fetch-milair.mjs || echo fetch-milair.mjs )"
+
       - name: Fetch tanker positions (AIS)
         env:
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
